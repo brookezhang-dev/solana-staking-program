@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "copy-idl": "mkdir -p public && cp ../target/idl/staking.json public/staking.json",
+    "copy-idl": "mkdir -p public && cp ../target/idl/staking.json public/staking.json || true",
     "dev": "npm run copy-idl && vite",
     "build": "npm run copy-idl && vite build",
     "preview": "vite preview"
