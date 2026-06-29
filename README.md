@@ -51,6 +51,21 @@ anchor deploy
 npx ts-node scripts/setup-devnet.ts   # creates mints, sets authority to PDA, initializes
 ```
 
+## Token names in wallets (optional)
+
+By default $STAKE / $MILK show as "Unknown token" (test mints have no metadata).
+The `create_token_metadata` instruction attaches Metaplex Token Metadata, signed by
+the Config PDA (the mint authority). After (re)deploying:
+
+```bash
+anchor build && anchor deploy
+(cd app && npm run copy-idl)
+npx ts-node scripts/add-metadata.ts     # names $STAKE and $MILK
+```
+
+Reconnect the wallet to see the names. ($BEEF is an external input token — name it
+separately if desired.)
+
 ## Frontend (devnet)
 
 A Vite + React + wallet-adapter app lives in `app/` (stage 4). After deploying and
@@ -63,6 +78,32 @@ cd app && npm install && npm run dev
 
 Connect Phantom (devnet) and use Stake / Unstake / Claim; each tx links to Solscan.
 See `app/README.md` for details.
+
+## Trying it with ANY wallet (self-serve faucet)
+
+A brand-new wallet has 0 $BEEF, so it can't stake yet. The program exposes a
+permissionless, capped `faucet` instruction so anyone can mint test $BEEF from the
+UI — no manual funding needed. This requires the $BEEF mint authority to be the
+Config PDA (a one-time transfer).
+
+One-time setup by the deployer (after building the program with `faucet`):
+
+```bash
+anchor build && anchor deploy
+(cd app && npm run copy-idl)
+npx ts-node scripts/beef-authority-to-pda.ts   # ONCE: $BEEF authority -> Config PDA
+```
+
+After that, the new-user flow is fully self-serve:
+
+1. Open the app, switch Phantom to **devnet**, connect the wallet.
+2. Click **领取 1000 测试 $BEEF** (shown prominently when the balance is 0).
+3. **Stake** → **Claim** → **Unstake**. Done — no CLI, no tribal knowledge.
+
+> The faucet exists only because $BEEF is a throwaway devnet test token; a real
+> input token would not have one. Cap per call: `FAUCET_MAX` (1000 $BEEF).
+> `scripts/airdrop-beef.ts` (CLI funding) is superseded once authority moves to the
+> PDA — use the in-app faucet instead.
 
 ## Key design (for reviewers — see Technical Design Document)
 

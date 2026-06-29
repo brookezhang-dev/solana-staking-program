@@ -18,4 +18,6 @@ pub enum StakingError {
     InvalidMint,
     #[msg("pool not initialized")]
     NotInitialized,
+    #[msg("faucet amount exceeds the per-call cap")]
+    FaucetTooMuch,
 }

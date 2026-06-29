@@ -166,6 +166,23 @@ export async function doUnstake({ program, connection, owner }: Ctx, amount: BN)
     .rpc();
 }
 
+export async function doFaucet({ program, connection, owner }: Ctx, amount: BN) {
+  const { config } = pdas(program.programId, owner);
+  const ixs: any[] = [];
+  const userBeefAta = await ensureAta(connection, owner, beefMint(), owner, ixs);
+  return program.methods
+    .faucet(amount)
+    .accountsStrict({
+      user: owner,
+      config,
+      beefMint: beefMint(),
+      userBeefAta,
+      tokenProgram: TOKEN_PROGRAM_ID,
+    })
+    .preInstructions(ixs)
+    .rpc();
+}
+
 export async function doClaim({ program, connection, owner }: Ctx) {
   const { config, userInfo } = pdas(program.programId, owner);
   const ixs: any[] = [];

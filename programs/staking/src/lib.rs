@@ -43,4 +43,21 @@ pub mod staking {
     pub fn claim_rewards(ctx: Context<ClaimRewards>) -> Result<()> {
         instructions::claim::handler(ctx)
     }
+
+    /// Attach Metaplex Token Metadata (name/symbol) to $STAKE or $MILK so wallets
+    /// show a readable name. Admin-only; Config PDA signs the metadata CPI.
+    pub fn create_token_metadata(
+        ctx: Context<CreateTokenMetadata>,
+        name: String,
+        symbol: String,
+        uri: String,
+    ) -> Result<()> {
+        instructions::metadata::handler(ctx, name, symbol, uri)
+    }
+
+    /// Devnet faucet: mint capped test $BEEF to the caller so any new wallet can
+    /// try staking. Requires $BEEF mint authority = Config PDA.
+    pub fn faucet(ctx: Context<Faucet>, amount: u64) -> Result<()> {
+        instructions::faucet::handler(ctx, amount)
+    }
 }

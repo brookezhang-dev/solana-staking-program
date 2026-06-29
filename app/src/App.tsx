@@ -11,6 +11,7 @@ import {
 import {
   beefMint,
   doClaim,
+  doFaucet,
   doStake,
   doUnstake,
   estimatePending,
@@ -118,6 +119,13 @@ export default function App() {
               <button className="act" disabled={busy || !programReady} onClick={() => run("Unstake", doUnstake, true)}>Unstake</button>
               <button className="act" disabled={busy || !programReady} onClick={() => run("Claim", doClaim, false)}>Claim</button>
             </div>
+            <button
+              className="act ghost"
+              disabled={busy || !programReady}
+              onClick={() => run("领取测试 $BEEF", (ctx: any) => doFaucet(ctx, toBase("1000")), false)}
+            >
+              {bal && bal.beef === 0n ? "余额为 0 — 领取 1000 测试 $BEEF" : "领取 1000 测试 $BEEF"}
+            </button>
           </div>
         </>
       )}

@@ -19,4 +19,6 @@ idl-build = ["anchor-lang/idl-build", "anchor-spl/idl-build"]
 [dependencies]
 # init_if_needed is required for the UserInfo PDA created on first stake (see design doc §5.4)
 anchor-lang = { version = "0.31.1", features = ["init-if-needed"] }
-anchor-spl = "0.31.1"
+# `metadata` feature pulls in the mpl-token-metadata CPI wrappers used by
+# create_token_metadata (so wallets show $STAKE / $MILK names).
+anchor-spl = { version = "0.31.1", features = ["metadata"] }

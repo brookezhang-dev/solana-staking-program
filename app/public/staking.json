@@ -160,6 +160,66 @@
       ]
     },
     {
+      "name": "faucet",
+      "docs": [
+        "Devnet faucet: mint capped test $BEEF to the caller so any new wallet can",
+        "try staking. Requires $BEEF mint authority = Config PDA."
+      ],
+      "discriminator": [
+        0,
+        98,
+        59,
+        30,
+        144,
+        142,
+        113,
+        12
+      ],
+      "accounts": [
+        {
+          "name": "user",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "beef_mint",
+          "writable": true
+        },
+        {
+          "name": "user_beef_ata",
+          "writable": true
+        },
+        {
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        }
+      ],
+      "args": [
+        {
+          "name": "amount",
+          "type": "u64"
+        }
+      ]
+    },
+    {
       "name": "initialize",
       "docs": [
         "Create Config + Vault, set $STAKE/$MILK mint authority to Config PDA,",
@@ -560,6 +620,11 @@
       "code": 6006,
       "name": "NotInitialized",
       "msg": "pool not initialized"
+    },
+    {
+      "code": 6007,
+      "name": "FaucetTooMuch",
+      "msg": "faucet amount exceeds the per-call cap"
     }
   ],
   "types": [
