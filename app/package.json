@@ -6,7 +6,7 @@
   "scripts": {
     "copy-idl": "mkdir -p public && cp ../target/idl/staking.json public/staking.json",
     "dev": "npm run copy-idl && vite",
-    "build": "npm run copy-idl && tsc && vite build",
+    "build": "npm run copy-idl && vite build",
     "preview": "vite preview"
   },
   "dependencies": {
