@@ -1,0 +1,75 @@
+:root {
+  font-family: system-ui, -apple-system, sans-serif;
+  color: #e8e8ea;
+  background: #0f1115;
+}
+body {
+  margin: 0;
+}
+.wrap {
+  max-width: 560px;
+  margin: 0 auto;
+  padding: 32px 20px 64px;
+}
+h1 {
+  font-size: 1.4rem;
+}
+.card {
+  background: #181b22;
+  border: 1px solid #262a33;
+  border-radius: 12px;
+  padding: 18px;
+  margin: 14px 0;
+}
+.row {
+  display: flex;
+  justify-content: space-between;
+  padding: 4px 0;
+  font-variant-numeric: tabular-nums;
+}
+.muted {
+  color: #9aa0aa;
+}
+input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 10px;
+  border-radius: 8px;
+  border: 1px solid #2c313b;
+  background: #0f1115;
+  color: #fff;
+  margin: 6px 0 10px;
+}
+button.act {
+  width: 100%;
+  padding: 11px;
+  border: 0;
+  border-radius: 8px;
+  background: #6d5dfc;
+  color: #fff;
+  font-weight: 600;
+  cursor: pointer;
+}
+button.act:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.grid3 {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 8px;
+}
+.warn {
+  background: #3a2a12;
+  border: 1px solid #6b4e1e;
+  color: #f0c879;
+  padding: 12px;
+  border-radius: 10px;
+}
+.status {
+  word-break: break-all;
+  font-size: 0.85rem;
+}
+a {
+  color: #9d92ff;
+}

@@ -1,0 +1,22 @@
+[package]
+name = "staking"
+version = "0.1.0"
+description = "Solana DeFi staking program with MasterChef-style rewards"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "staking"
+
+[features]
+default = []
+cpi = ["no-entrypoint"]
+no-entrypoint = []
+no-idl = []
+no-log-ix-name = []
+idl-build = ["anchor-lang/idl-build", "anchor-spl/idl-build"]
+
+[dependencies]
+# init_if_needed is required for the UserInfo PDA created on first stake (see design doc §5.4)
+anchor-lang = { version = "0.31.1", features = ["init-if-needed"] }
+anchor-spl = "0.31.1"
