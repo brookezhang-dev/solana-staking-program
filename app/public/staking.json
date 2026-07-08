@@ -87,6 +87,64 @@
       "args": []
     },
     {
+      "name": "faucet",
+      "docs": [
+        "Devnet-only faucet (compiled under `devnet-faucet` feature)."
+      ],
+      "discriminator": [
+        0,
+        98,
+        59,
+        30,
+        144,
+        142,
+        113,
+        12
+      ],
+      "accounts": [
+        {
+          "name": "user",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "beef_mint",
+          "writable": true
+        },
+        {
+          "name": "user_beef_ata",
+          "writable": true
+        },
+        {
+          "name": "beef_token_program"
+        }
+      ],
+      "args": [
+        {
+          "name": "amount",
+          "type": "u64"
+        }
+      ]
+    },
+    {
       "name": "fund_rewards",
       "docs": [
         "Top up the RewardVault (anyone, in-only)."
