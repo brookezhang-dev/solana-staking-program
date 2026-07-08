@@ -4,11 +4,13 @@ A Solana (Anchor) DeFi staking program: deposit **$BEEF** to receive 1:1 **$STAK
 accrue **$MILK** rewards over time (MasterChef accumulator, O(1)), redeem principal
 and claim rewards independently.
 
-> **Status: feature-complete.** initialize / stake / unstake / claim_rewards are
-> implemented with MasterChef O(1) rewards and linear-decay emission. Tests cover
-> the happy paths, boundaries, and multi-user accrual. A devnet frontend lives in
-> `app/`. See `实现路线图-IMPLEMENTATION-ROADMAP.md` for the build history and
-> `设计与实现说明-DESIGN-NOTES.md` for the reviewer-facing design.
+> **Status: v3, deployed to devnet.** 6 instructions (initialize / stake / unstake /
+> claim_rewards / fund_rewards / set_emission_params, + devnet-only faucet).
+> $STAKE is a **Token-2022 NonTransferable** receipt; $MILK is an **external token**
+> paid from a **prefunded RewardVault** (program never mints it). MasterChef O(1)
+> rewards with **configurable, re-anchored, end_time-bounded** linear-decay emission.
+> Authoritative design: `v3-执行计划-EXECUTION-PLAN.md` + `设计与实现说明-DESIGN-NOTES.md`.
+> **Program ID (devnet):** `54HWhVGu8HoK46PUj3ijauVjrgNScGHyzpnvHsvZGpcv`
 
 ## Layout
 
@@ -105,22 +107,27 @@ After that, the new-user flow is fully self-serve:
 > `scripts/airdrop-beef.ts` (CLI funding) is superseded once authority moves to the
 > PDA — use the in-app faucet instead.
 
-## Key design (for reviewers — see Technical Design Document)
+## Key design (for reviewers — see `v3-执行计划-EXECUTION-PLAN.md` / DESIGN-NOTES)
 
-- **PDAs**: `Config [b"config"]` doubles as vault authority + $STAKE/$MILK mint
-  authority; `Vault [b"vault"]`; `UserInfo [b"user", user]`.
-- **Three CPIs**: `transfer` (stake in: user-signed; unstake out: PDA-signed),
-  `mint_to` ($STAKE/$MILK, PDA-signed), `burn` ($STAKE, user-signed).
+- **PDAs**: `Config [b"config"]` (state + emission params, authority of both vaults
+  + $STAKE mint); `Vault [b"vault"]` ($BEEF); `RewardVault [b"reward_vault"]` ($MILK);
+  `UserInfo [b"user", user]` (amount + reward_debt + pending_unclaimed).
+- **Tokens**: $STAKE = Token-2022 **NonTransferable** (program mints/burns);
+  $MILK = external token, program **only transfers from RewardVault** (never mints);
+  $BEEF = input. All transfers use `transfer_checked` (classic + Token-2022 via `token_interface`).
 - **Rewards O(1)**: global `acc_reward_per_share` + per-user `reward_debt`; no loops.
-- **Principal authority = $STAKE burn**: redeem amount is guarded by the burn;
-  `UserInfo.amount` is a reward mirror only (known limit + upgrade path: design doc §18).
-- **Safety**: PDA-only mint/vault authority, mint/owner/seeds constraints,
-  `checked_*` math, `amount > 0`, checks-effects-interactions.
+  Strategy B: pending accrues into `pending_unclaimed`, paid only on claim.
+- **Principal authority = `UserInfo.amount` (checked_sub)**; $STAKE burn is the receipt
+  (equivalent under NonTransferable). No two-ledger desync possible.
+- **Configurable emission**: `set_emission_params` re-anchors (`rate_anchor_time`) after
+  settling; `end_time` bounds total liability → prefund `∫[start,end] r` = provable solvency.
+- **Safety**: PDA-only mint/vault authority, mint/owner/seeds/token-program constraints,
+  `checked_*` math, balance-diff (fee-token safe), checks-effects-interactions.
 
 ## Program ID
 
-`6boJRbzGer4vYjprjSoAz879g68JRKXHvSsATsBRaZSq` (declared in `lib.rs` and `Anchor.toml`;
-re-run `anchor keys list` and update both if you redeploy under a new key).
+`54HWhVGu8HoK46PUj3ijauVjrgNScGHyzpnvHsvZGpcv` (devnet; in `lib.rs` + `Anchor.toml`.
+`anchor keys sync` after generating a new keypair if you redeploy fresh.)
 
 ## Tests
 

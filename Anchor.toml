@@ -6,17 +6,17 @@ solana_version = "4.0.3"
 resolution = true
 skip-lint = false
 
-[programs.localnet]
-staking = "6boJRbzGer4vYjprjSoAz879g68JRKXHvSsATsBRaZSq"
-
 [programs.devnet]
+staking = "54HWhVGu8HoK46PUj3ijauVjrgNScGHyzpnvHsvZGpcv"
+
+[programs.localnet]
 staking = "6boJRbzGer4vYjprjSoAz879g68JRKXHvSsATsBRaZSq"
 
 [registry]
 url = "https://api.apr.dev"
 
 [provider]
-cluster = "Devnet"
+cluster = "devnet"
 wallet = "~/.config/solana/id.json"
 
 [scripts]

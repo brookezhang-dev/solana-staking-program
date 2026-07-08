@@ -1,15 +1,13 @@
-//! faucet: devnet convenience — mint test $BEEF to the caller so any new wallet
-//! can try staking. Permissionless, capped per call (FAUCET_MAX). Requires the
-//! $BEEF mint authority to be the Config PDA (see scripts/beef-authority-to-pda.ts).
-//!
-//! NOTE: this exists only because $BEEF is a throwaway test token on devnet. A
-//! real input token would have its own supply/issuance and no such faucet.
+//! faucet (v3, devnet-only): mint capped test $BEEF to the caller so any new
+//! wallet can try staking. Compiled ONLY under `feature = "devnet-faucet"`;
+//! main-net build omits it entirely (not a runtime switch). Requires $BEEF mint
+//! authority = Config PDA (devnet setup arranges this).
 
 use crate::constants::*;
 use crate::errors::StakingError;
 use crate::state::Config;
 use anchor_lang::prelude::*;
-use anchor_spl::token::{self, Mint, MintTo, Token, TokenAccount};
+use anchor_spl::token_interface::{self, Mint, MintTo, TokenAccount, TokenInterface};
 
 #[derive(Accounts)]
 pub struct Faucet<'info> {
@@ -20,29 +18,27 @@ pub struct Faucet<'info> {
     pub config: Account<'info, Config>,
 
     #[account(mut, address = config.beef_mint)]
-    pub beef_mint: Account<'info, Mint>,
+    pub beef_mint: InterfaceAccount<'info, Mint>,
+    #[account(mut, token::mint = beef_mint, token::authority = user)]
+    pub user_beef_ata: InterfaceAccount<'info, TokenAccount>,
 
-    #[account(mut, constraint = user_beef_ata.mint == config.beef_mint @ StakingError::InvalidMint)]
-    pub user_beef_ata: Account<'info, TokenAccount>,
-
-    pub token_program: Program<'info, Token>,
+    pub beef_token_program: Interface<'info, TokenInterface>,
 }
 
 pub fn handler(ctx: Context<Faucet>, amount: u64) -> Result<()> {
     require!(amount > 0, StakingError::AmountZero);
     require!(amount <= FAUCET_MAX, StakingError::FaucetTooMuch);
 
-    // Mint $BEEF to the caller (Config PDA signs as the $BEEF mint authority).
-    let signer_seeds: &[&[&[u8]]] = &[&[CONFIG_SEED, &[ctx.accounts.config.bump]]];
-    token::mint_to(
+    let signer: &[&[&[u8]]] = &[&[CONFIG_SEED, &[ctx.accounts.config.bump]]];
+    token_interface::mint_to(
         CpiContext::new_with_signer(
-            ctx.accounts.token_program.to_account_info(),
+            ctx.accounts.beef_token_program.to_account_info(),
             MintTo {
                 mint: ctx.accounts.beef_mint.to_account_info(),
                 to: ctx.accounts.user_beef_ata.to_account_info(),
                 authority: ctx.accounts.config.to_account_info(),
             },
-            signer_seeds,
+            signer,
         ),
         amount,
     )?;

@@ -4,7 +4,7 @@ import { WalletMultiButton } from "@solana/wallet-adapter-react-ui";
 import type { Wallet } from "@coral-xyz/anchor";
 import {
   BEEF_MINT,
-  MILK_MINT,
+  REWARD_MINT,
   STAKE_MINT,
   solscanTx,
 } from "./config";
@@ -17,17 +17,19 @@ import {
   estimatePending,
   fromBase,
   getProgram,
-  milkMint,
+  rewardMint,
   pdas,
   readBalance,
   stakeMint,
   toBase,
+  CLASSIC_PROGRAM,
+  STAKE_PROGRAM,
 } from "./staking";
 
 const configured =
-  ![BEEF_MINT, STAKE_MINT, MILK_MINT].some((m) => m.startsWith("REPLACE"));
+  ![BEEF_MINT, STAKE_MINT, REWARD_MINT].some((m) => m.startsWith("REPLACE"));
 
-type Balances = { beef: bigint; stake: bigint; milk: bigint; pending: bigint };
+type Balances = { beef: bigint; stake: bigint; reward: bigint; pending: bigint };
 
 export default function App() {
   const { connection } = useConnection();
@@ -46,10 +48,10 @@ export default function App() {
     try {
       const program = await getProgram(connection, wallet as Wallet);
       const { config, userInfo } = pdas(program.programId, owner);
-      const [beef, stake, milk] = await Promise.all([
-        readBalance(connection, beefMint(), owner),
-        readBalance(connection, stakeMint(), owner),
-        readBalance(connection, milkMint(), owner),
+      const [beef, stake, reward] = await Promise.all([
+        readBalance(connection, beefMint(), owner, CLASSIC_PROGRAM),
+        readBalance(connection, stakeMint(), owner, STAKE_PROGRAM),
+        readBalance(connection, rewardMint(), owner, CLASSIC_PROGRAM),
       ]);
       let pending = 0n;
       try {
@@ -59,7 +61,7 @@ export default function App() {
       } catch {
         /* userInfo not created yet → no pending */
       }
-      setBal({ beef, stake, milk, pending });
+      setBal({ beef, stake, reward, pending });
     } catch (e: any) {
       setStatus({ msg: `read error: ${e.message ?? e}` });
     }
@@ -107,7 +109,7 @@ export default function App() {
           <div className="card">
             <div className="row"><span className="muted">$BEEF</span><span>{bal ? fromBase(bal.beef) : "—"}</span></div>
             <div className="row"><span className="muted">$STAKE (staked)</span><span>{bal ? fromBase(bal.stake) : "—"}</span></div>
-            <div className="row"><span className="muted">$MILK</span><span>{bal ? fromBase(bal.milk) : "—"}</span></div>
+            <div className="row"><span className="muted">$MILK (reward)</span><span>{bal ? fromBase(bal.reward) : "—"}</span></div>
             <div className="row"><span className="muted">Claimable $MILK (est.)</span><span>{bal ? fromBase(bal.pending) : "—"}</span></div>
           </div>
 

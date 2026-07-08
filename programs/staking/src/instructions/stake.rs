@@ -1,8 +1,5 @@
-//! stake: transfer $BEEF in, mint $STAKE out, settle pending $MILK. Design doc §6.2.
-//!
-//! Step 2.3 (core) + step 3.5 (reward hookup, strategy A: pending is minted
-//! immediately). Order: update_pool -> capture pending(OLD amount) -> effects
-//! (amount/total_staked/reward_debt) -> interactions (transfer/mint).
+//! stake (v3): transfer $BEEF in (balance-diff, fee-token safe), mint equal $STAKE,
+//! settle pending into pending_unclaimed (strategy B, no reward transfer). §1.3.
 
 use crate::constants::*;
 use crate::errors::StakingError;
@@ -10,7 +7,9 @@ use crate::events::StakeEvent;
 use crate::instructions::reward;
 use crate::state::{Config, UserInfo};
 use anchor_lang::prelude::*;
-use anchor_spl::token::{self, Mint, MintTo, Token, TokenAccount, Transfer};
+use anchor_spl::token_interface::{
+    self, Mint, MintTo, TokenAccount, TokenInterface, TransferChecked,
+};
 
 #[derive(Accounts)]
 pub struct Stake<'info> {
@@ -29,114 +28,94 @@ pub struct Stake<'info> {
     )]
     pub user_info: Account<'info, UserInfo>,
 
-    #[account(mut, constraint = user_beef_ata.mint == config.beef_mint @ StakingError::InvalidMint)]
-    pub user_beef_ata: Account<'info, TokenAccount>,
-
-    #[account(mut, address = config.vault)]
-    pub vault: Account<'info, TokenAccount>,
-
-    #[account(mut, constraint = user_stake_ata.mint == config.stake_mint @ StakingError::InvalidMint)]
-    pub user_stake_ata: Account<'info, TokenAccount>,
-
+    #[account(mut, address = config.beef_mint)]
+    pub beef_mint: InterfaceAccount<'info, Mint>,
     #[account(mut, address = config.stake_mint)]
-    pub stake_mint: Account<'info, Mint>,
+    pub stake_mint: InterfaceAccount<'info, Mint>,
 
-    // Reward (strategy A): pending $MILK is minted during stake.
-    #[account(mut, address = config.milk_mint)]
-    pub milk_mint: Account<'info, Mint>,
+    #[account(mut, token::mint = beef_mint, token::authority = user)]
+    pub user_beef_ata: InterfaceAccount<'info, TokenAccount>,
+    #[account(mut, address = config.vault)]
+    pub vault: InterfaceAccount<'info, TokenAccount>,
+    #[account(mut, token::mint = stake_mint, token::authority = user)]
+    pub user_stake_ata: InterfaceAccount<'info, TokenAccount>,
 
-    #[account(mut, constraint = user_milk_ata.mint == config.milk_mint @ StakingError::InvalidMint)]
-    pub user_milk_ata: Account<'info, TokenAccount>,
-
-    pub token_program: Program<'info, Token>,
+    pub beef_token_program: Interface<'info, TokenInterface>,
+    pub stake_token_program: Interface<'info, TokenInterface>,
     pub system_program: Program<'info, System>,
 }
 
 pub fn handler(ctx: Context<Stake>, amount: u64) -> Result<()> {
     require!(amount > 0, StakingError::AmountZero);
-
     let now = Clock::get()?.unix_timestamp;
 
-    // 1) Settle the pool BEFORE any share change.
     reward::update_pool(&mut ctx.accounts.config, now)?;
     let acc = ctx.accounts.config.acc_reward_per_share;
     let config_bump = ctx.accounts.config.bump;
 
-    // 2) Capture pending against the OLD amount/debt (0 for a brand-new user).
-    let pending = reward::pending_reward(
-        ctx.accounts.user_info.amount,
-        acc,
-        ctx.accounts.user_info.reward_debt,
-    )?;
+    // Strategy B: settle pending against OLD amount → accumulate into pending_unclaimed.
+    let old_amount = ctx.accounts.user_info.amount;
+    let pending = reward::pending_reward(old_amount, acc, ctx.accounts.user_info.reward_debt)?;
 
-    // 3) Effects: update mirror + total, then reset reward_debt to the NEW baseline.
-    {
-        let user_info = &mut ctx.accounts.user_info;
-        user_info.owner = ctx.accounts.user.key();
-        user_info.bump = ctx.bumps.user_info;
-        user_info.amount = user_info
-            .amount
-            .checked_add(amount)
-            .ok_or(StakingError::MathOverflow)?;
-        user_info.reward_debt = reward::reward_debt_for(user_info.amount, acc)?;
-    }
-    {
-        let config = &mut ctx.accounts.config;
-        config.total_staked = config
-            .total_staked
-            .checked_add(amount)
-            .ok_or(StakingError::MathOverflow)?;
-    }
-
-    // 4) Interactions (atomic): transfer in, mint $STAKE, settle pending $MILK.
-    let signer_seeds: &[&[&[u8]]] = &[&[CONFIG_SEED, &[config_bump]]];
-
-    // user $BEEF -> vault (user signs)
-    token::transfer(
+    // Transfer $BEEF in; credit the ACTUAL received amount (balance-diff, fee-token safe).
+    let before = ctx.accounts.vault.amount;
+    token_interface::transfer_checked(
         CpiContext::new(
-            ctx.accounts.token_program.to_account_info(),
-            Transfer {
+            ctx.accounts.beef_token_program.to_account_info(),
+            TransferChecked {
                 from: ctx.accounts.user_beef_ata.to_account_info(),
+                mint: ctx.accounts.beef_mint.to_account_info(),
                 to: ctx.accounts.vault.to_account_info(),
                 authority: ctx.accounts.user.to_account_info(),
             },
         ),
         amount,
+        ctx.accounts.beef_mint.decimals,
     )?;
+    ctx.accounts.vault.reload()?;
+    let credited = ctx
+        .accounts
+        .vault
+        .amount
+        .checked_sub(before)
+        .ok_or(StakingError::MathOverflow)?;
+    require!(credited > 0, StakingError::ZeroCredited);
 
-    // mint $STAKE -> user (Config PDA signs)
-    token::mint_to(
+    // Effects.
+    {
+        let ui = &mut ctx.accounts.user_info;
+        ui.owner = ctx.accounts.user.key();
+        ui.bump = ctx.bumps.user_info;
+        ui.pending_unclaimed = ui
+            .pending_unclaimed
+            .checked_add(pending)
+            .ok_or(StakingError::MathOverflow)?;
+        ui.amount = ui.amount.checked_add(credited).ok_or(StakingError::MathOverflow)?;
+        ui.reward_debt = reward::reward_debt_for(ui.amount, acc)?;
+    }
+    {
+        let c = &mut ctx.accounts.config;
+        c.total_staked = c.total_staked.checked_add(credited).ok_or(StakingError::MathOverflow)?;
+    }
+
+    // Mint receipt $STAKE = credited (1:1 with actual principal). Config PDA signs.
+    let signer: &[&[&[u8]]] = &[&[CONFIG_SEED, &[config_bump]]];
+    token_interface::mint_to(
         CpiContext::new_with_signer(
-            ctx.accounts.token_program.to_account_info(),
+            ctx.accounts.stake_token_program.to_account_info(),
             MintTo {
                 mint: ctx.accounts.stake_mint.to_account_info(),
                 to: ctx.accounts.user_stake_ata.to_account_info(),
                 authority: ctx.accounts.config.to_account_info(),
             },
-            signer_seeds,
+            signer,
         ),
-        amount,
+        credited,
     )?;
-
-    // settle pending $MILK (Config PDA signs)
-    if pending > 0 {
-        token::mint_to(
-            CpiContext::new_with_signer(
-                ctx.accounts.token_program.to_account_info(),
-                MintTo {
-                    mint: ctx.accounts.milk_mint.to_account_info(),
-                    to: ctx.accounts.user_milk_ata.to_account_info(),
-                    authority: ctx.accounts.config.to_account_info(),
-                },
-                signer_seeds,
-            ),
-            pending,
-        )?;
-    }
 
     emit!(StakeEvent {
         user: ctx.accounts.user.key(),
-        amount,
+        credited,
         total: ctx.accounts.user_info.amount,
     });
     Ok(())

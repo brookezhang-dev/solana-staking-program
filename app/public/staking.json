@@ -1,5 +1,5 @@
 {
-  "address": "6boJRbzGer4vYjprjSoAz879g68JRKXHvSsATsBRaZSq",
+  "address": "54HWhVGu8HoK46PUj3ijauVjrgNScGHyzpnvHsvZGpcv",
   "metadata": {
     "name": "staking",
     "version": "0.1.0",
@@ -10,7 +10,7 @@
     {
       "name": "claim_rewards",
       "docs": [
-        "Settle and mint pending $MILK rewards (decoupled from principal). See design doc §6.4."
+        "Pay all pending_unclaimed from RewardVault (insufficient => fails)."
       ],
       "discriminator": [
         4,
@@ -69,101 +69,27 @@
           }
         },
         {
-          "name": "milk_mint",
+          "name": "reward_mint",
           "writable": true
         },
         {
-          "name": "user_milk_ata",
+          "name": "reward_vault",
           "writable": true
         },
         {
-          "name": "token_program",
-          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+          "name": "user_reward_ata",
+          "writable": true
+        },
+        {
+          "name": "reward_token_program"
         }
       ],
       "args": []
     },
     {
-      "name": "create_token_metadata",
-      "docs": [
-        "Attach Metaplex Token Metadata (name/symbol) to $STAKE or $MILK so wallets",
-        "show a readable name. Admin-only; Config PDA signs the metadata CPI."
-      ],
-      "discriminator": [
-        221,
-        80,
-        176,
-        37,
-        153,
-        188,
-        160,
-        68
-      ],
-      "accounts": [
-        {
-          "name": "admin",
-          "writable": true,
-          "signer": true
-        },
-        {
-          "name": "config",
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  99,
-                  111,
-                  110,
-                  102,
-                  105,
-                  103
-                ]
-              }
-            ]
-          }
-        },
-        {
-          "name": "mint",
-          "writable": true
-        },
-        {
-          "name": "metadata",
-          "writable": true
-        },
-        {
-          "name": "token_metadata_program",
-          "address": "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s"
-        },
-        {
-          "name": "system_program",
-          "address": "11111111111111111111111111111111"
-        },
-        {
-          "name": "rent",
-          "address": "SysvarRent111111111111111111111111111111111"
-        }
-      ],
-      "args": [
-        {
-          "name": "name",
-          "type": "string"
-        },
-        {
-          "name": "symbol",
-          "type": "string"
-        },
-        {
-          "name": "uri",
-          "type": "string"
-        }
-      ]
-    },
-    {
       "name": "faucet",
       "docs": [
-        "Devnet faucet: mint capped test $BEEF to the caller so any new wallet can",
-        "try staking. Requires $BEEF mint authority = Config PDA."
+        "Devnet-only faucet (compiled under `devnet-faucet` feature)."
       ],
       "discriminator": [
         0,
@@ -208,8 +134,69 @@
           "writable": true
         },
         {
-          "name": "token_program",
-          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+          "name": "beef_token_program"
+        }
+      ],
+      "args": [
+        {
+          "name": "amount",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "fund_rewards",
+      "docs": [
+        "Top up the RewardVault (anyone, in-only)."
+      ],
+      "discriminator": [
+        114,
+        64,
+        163,
+        112,
+        175,
+        167,
+        19,
+        121
+      ],
+      "accounts": [
+        {
+          "name": "funder",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "reward_mint",
+          "writable": true
+        },
+        {
+          "name": "reward_vault",
+          "writable": true
+        },
+        {
+          "name": "funder_reward_ata",
+          "writable": true
+        },
+        {
+          "name": "reward_token_program"
         }
       ],
       "args": [
@@ -222,8 +209,8 @@
     {
       "name": "initialize",
       "docs": [
-        "Create Config + Vault, set $STAKE/$MILK mint authority to Config PDA,",
-        "store emission params. See design doc §6.1."
+        "Create Config + Vault + RewardVault; validate $STAKE (NonTransferable,",
+        "authority = Config PDA) and reject transfer-hook beef/reward; store params."
       ],
       "discriminator": [
         175,
@@ -264,12 +251,10 @@
           "name": "beef_mint"
         },
         {
-          "name": "stake_mint",
-          "writable": true
+          "name": "stake_mint"
         },
         {
-          "name": "milk_mint",
-          "writable": true
+          "name": "reward_mint"
         },
         {
           "name": "vault",
@@ -290,8 +275,35 @@
           }
         },
         {
-          "name": "token_program",
-          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+          "name": "reward_vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  119,
+                  97,
+                  114,
+                  100,
+                  95,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "beef_token_program"
+        },
+        {
+          "name": "reward_token_program"
         },
         {
           "name": "system_program",
@@ -314,13 +326,83 @@
         {
           "name": "min_rate",
           "type": "u64"
+        },
+        {
+          "name": "start_time",
+          "type": "i64"
+        },
+        {
+          "name": "end_time",
+          "type": "i64"
+        }
+      ]
+    },
+    {
+      "name": "set_emission_params",
+      "docs": [
+        "Admin: update emission params with re-anchoring (settle → write → re-anchor)."
+      ],
+      "discriminator": [
+        189,
+        17,
+        68,
+        225,
+        214,
+        210,
+        172,
+        194
+      ],
+      "accounts": [
+        {
+          "name": "admin",
+          "signer": true,
+          "relations": [
+            "config"
+          ]
+        },
+        {
+          "name": "config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "args": [
+        {
+          "name": "initial_rate",
+          "type": "u64"
+        },
+        {
+          "name": "decay_per_sec",
+          "type": "u64"
+        },
+        {
+          "name": "min_rate",
+          "type": "u64"
+        },
+        {
+          "name": "end_time",
+          "type": "i64"
         }
       ]
     },
     {
       "name": "stake",
       "docs": [
-        "Deposit $BEEF into vault, mint equal $STAKE to user. See design doc §6.2."
+        "Deposit $BEEF (balance-diff), mint equal $STAKE, settle pending (strategy B)."
       ],
       "discriminator": [
         206,
@@ -379,6 +461,14 @@
           }
         },
         {
+          "name": "beef_mint",
+          "writable": true
+        },
+        {
+          "name": "stake_mint",
+          "writable": true
+        },
+        {
           "name": "user_beef_ata",
           "writable": true
         },
@@ -391,20 +481,10 @@
           "writable": true
         },
         {
-          "name": "stake_mint",
-          "writable": true
+          "name": "beef_token_program"
         },
         {
-          "name": "milk_mint",
-          "writable": true
-        },
-        {
-          "name": "user_milk_ata",
-          "writable": true
-        },
-        {
-          "name": "token_program",
-          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+          "name": "stake_token_program"
         },
         {
           "name": "system_program",
@@ -421,7 +501,7 @@
     {
       "name": "unstake",
       "docs": [
-        "Burn $STAKE, refund equal $BEEF from vault (partial allowed). See design doc §6.3."
+        "Burn $STAKE, refund $BEEF from Vault, settle pending (strategy B)."
       ],
       "discriminator": [
         90,
@@ -480,6 +560,14 @@
           }
         },
         {
+          "name": "beef_mint",
+          "writable": true
+        },
+        {
+          "name": "stake_mint",
+          "writable": true
+        },
+        {
           "name": "user_beef_ata",
           "writable": true
         },
@@ -492,20 +580,10 @@
           "writable": true
         },
         {
-          "name": "stake_mint",
-          "writable": true
+          "name": "beef_token_program"
         },
         {
-          "name": "milk_mint",
-          "writable": true
-        },
-        {
-          "name": "user_milk_ata",
-          "writable": true
-        },
-        {
-          "name": "token_program",
-          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+          "name": "stake_token_program"
         }
       ],
       "args": [
@@ -556,6 +634,32 @@
         140,
         212,
         219
+      ]
+    },
+    {
+      "name": "EmissionParamsUpdatedEvent",
+      "discriminator": [
+        206,
+        67,
+        134,
+        97,
+        59,
+        123,
+        188,
+        81
+      ]
+    },
+    {
+      "name": "FundEvent",
+      "discriminator": [
+        51,
+        52,
+        94,
+        171,
+        253,
+        120,
+        28,
+        26
       ]
     },
     {
@@ -625,6 +729,36 @@
       "code": 6007,
       "name": "FaucetTooMuch",
       "msg": "faucet amount exceeds the per-call cap"
+    },
+    {
+      "code": 6008,
+      "name": "RewardVaultInsufficient",
+      "msg": "reward vault balance insufficient to pay pending"
+    },
+    {
+      "code": 6009,
+      "name": "InvalidEmissionParams",
+      "msg": "emission params invalid: require min_rate <= initial_rate"
+    },
+    {
+      "code": 6010,
+      "name": "InvalidEndTime",
+      "msg": "end_time invalid: must be 0 or > now and > start_time"
+    },
+    {
+      "code": 6011,
+      "name": "StakeMintNotNonTransferable",
+      "msg": "stake mint must be a Token-2022 NonTransferable mint"
+    },
+    {
+      "code": 6012,
+      "name": "UnsupportedTokenExtension",
+      "msg": "token has an unsupported extension (transfer fee / transfer hook)"
+    },
+    {
+      "code": 6013,
+      "name": "ZeroCredited",
+      "msg": "credited amount is zero after transfer (all consumed by fee?)"
     }
   ],
   "types": [
@@ -648,7 +782,8 @@
       "name": "Config",
       "docs": [
         "Global config + reward-pool state. PDA: seeds = [CONFIG_SEED].",
-        "Also acts as the vault authority and the $STAKE / $MILK mint authority."
+        "Also acts as authority of both vaults AND the $STAKE mint authority.",
+        "$MILK/reward mint authority is NOT held by the program (prefunded-vault model)."
       ],
       "type": {
         "kind": "struct",
@@ -666,11 +801,15 @@
             "type": "pubkey"
           },
           {
-            "name": "milk_mint",
+            "name": "reward_mint",
             "type": "pubkey"
           },
           {
             "name": "vault",
+            "type": "pubkey"
+          },
+          {
+            "name": "reward_vault",
             "type": "pubkey"
           },
           {
@@ -690,6 +829,14 @@
             "type": "i64"
           },
           {
+            "name": "rate_anchor_time",
+            "type": "i64"
+          },
+          {
+            "name": "end_time",
+            "type": "i64"
+          },
+          {
             "name": "initial_rate",
             "type": "u64"
           },
@@ -702,12 +849,87 @@
             "type": "u64"
           },
           {
+            "name": "total_claimed",
+            "type": "u64"
+          },
+          {
             "name": "bump",
             "type": "u8"
           },
           {
             "name": "vault_bump",
             "type": "u8"
+          },
+          {
+            "name": "reward_vault_bump",
+            "type": "u8"
+          },
+          {
+            "name": "reserved",
+            "type": {
+              "array": [
+                "u8",
+                64
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "EmissionParamsUpdatedEvent",
+      "docs": [
+        "Emitted by set_emission_params — records the re-anchoring."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "admin",
+            "type": "pubkey"
+          },
+          {
+            "name": "initial_rate",
+            "type": "u64"
+          },
+          {
+            "name": "decay_per_sec",
+            "type": "u64"
+          },
+          {
+            "name": "min_rate",
+            "type": "u64"
+          },
+          {
+            "name": "end_time",
+            "type": "i64"
+          },
+          {
+            "name": "rate_anchor_time",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "FundEvent",
+      "docs": [
+        "Emitted by fund_rewards — water-level bot tracks solvency from this + ClaimEvent."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "funder",
+            "type": "pubkey"
+          },
+          {
+            "name": "credited",
+            "type": "u64"
+          },
+          {
+            "name": "reward_vault_balance",
+            "type": "u64"
           }
         ]
       }
@@ -722,7 +944,7 @@
             "type": "pubkey"
           },
           {
-            "name": "amount",
+            "name": "credited",
             "type": "u64"
           },
           {
@@ -756,8 +978,8 @@
       "name": "UserInfo",
       "docs": [
         "Per-user state. PDA: seeds = [USER_SEED, user_pubkey].",
-        "`amount` is a REWARD-SHARE MIRROR only (normally == user's $STAKE balance).",
-        "The authoritative principal is the user's $STAKE balance (see design doc §3.3, §18)."
+        "`amount` is the SOLE principal ledger (redeem limit AND reward share both use it).",
+        "With NonTransferable $STAKE, `amount ≡ 用户 $STAKE 余额` holds physically."
       ],
       "type": {
         "kind": "struct",
@@ -775,8 +997,21 @@
             "type": "u128"
           },
           {
+            "name": "pending_unclaimed",
+            "type": "u64"
+          },
+          {
             "name": "bump",
             "type": "u8"
+          },
+          {
+            "name": "reserved",
+            "type": {
+              "array": [
+                "u8",
+                16
+              ]
+            }
           }
         ]
       }

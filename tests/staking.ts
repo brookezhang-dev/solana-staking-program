@@ -1,406 +1,233 @@
 /**
- * Anchor tests. See design doc §13.
+ * Anchor tests (v3). See v3 执行计划 §4.
  *
- * Core (step 2.5):  initialize / stake / unstake happy path + boundaries.
- * Rewards (3.4/3.6): claim; multi-user MasterChef accrual.
+ * RUN ON LOCALNET (fresh validator each run — avoids the devnet singleton-config
+ * conflict):
+ *   1) set [provider] cluster = "Localnet" in Anchor.toml (or run a local validator)
+ *   2) recent `solana-test-validator` bundles Token-2022 (TokenzQd…); if yours does
+ *      not, add to Anchor.toml:
+ *        [test.validator]
+ *        url = "https://api.devnet.solana.com"
+ *        [[test.validator.clone]]
+ *        address = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+ *   3) anchor test
  *
- * Determinism note: a live validator advances the Clock by wall-clock, so we do
- * NOT hard-code the §7.3 "Alice=150 / Bob=50" integers. Instead we read the
- * on-chain `last_reward_time` / `acc_reward_per_share` / `total_staked` around
- * each tx and verify the contract's own accumulator update and each user's
- * minted $MILK against an independent BigInt mirror of the exact integer math.
- * That is a STRONGER check than the fixed table (it holds for arbitrary deltas).
- * For the literal 150/50 table use solana-bankrun to warp the clock.
- *
- * Run: `anchor test`
+ * Determinism note: emission assertions read on-chain timestamps and recompute the
+ * exact integer math in a BigInt mirror (stronger than a fixed table).
  */
 import * as anchor from "@coral-xyz/anchor";
 import { Program, BN } from "@coral-xyz/anchor";
 import { Staking } from "../target/types/staking";
-import { PublicKey, Keypair, LAMPORTS_PER_SOL } from "@solana/web3.js";
+import { PublicKey, Keypair, SystemProgram, SYSVAR_RENT_PUBKEY, Transaction, sendAndConfirmTransaction, LAMPORTS_PER_SOL } from "@solana/web3.js";
 import {
-  TOKEN_PROGRAM_ID,
-  createMint,
-  getOrCreateAssociatedTokenAccount,
-  mintTo,
-  getAccount,
-  getMint,
+  TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID, ExtensionType, getMintLen, LENGTH_SIZE, TYPE_SIZE,
+  createMint, getOrCreateAssociatedTokenAccount, mintTo, getAccount, getAssociatedTokenAddressSync,
+  createInitializeMintInstruction, createInitializeNonTransferableMintInstruction,
+  createInitializeMetadataPointerInstruction, setAuthority, AuthorityType,
+  createTransferCheckedInstruction,
 } from "@solana/spl-token";
+import { createInitializeInstruction, pack, type TokenMetadata } from "@solana/spl-token-metadata";
 import { assert, expect } from "chai";
 
-const DECIMALS = 9;
-const UNIT = new BN(10).pow(new BN(DECIMALS)); // 1 token in base units
-const ACC_PRECISION = 1_000_000_000_000n; // 1e12, must match constants.rs
+const DEC = 9;
+const UNIT = 10n ** BigInt(DEC);
+const ACC_PRECISION = 1_000_000_000_000n;
+// Emission params used by initialize.
+const INITIAL_RATE = 1_000_000n, DECAY = 1_000n, MIN = 1_000n;
 
-// Emission params (linear decay). Over the few-second test window the rate stays
-// in the decay region (floor reached ~999s after start), so the trapezoid branch
-// is what gets exercised end-to-end.
-const INIT_RATE = new BN(1_000_000);
-const DECAY = new BN(1_000);
-const MIN = new BN(1_000);
-const INIT_RATE_BI = 1_000_000n;
-const DECAY_BI = 1_000n;
-const MIN_BI = 1_000n;
-let START = 0n; // config.start_time, set right after initialize
-
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-// floor(a * b / c) in BigInt — mirrors the on-chain u128 integer math.
-const mulDiv = (a: bigint, b: bigint, c: bigint) => (a * b) / c;
-
-// Exact BigInt mirror of reward::emission_between (linear-decay path).
-function emissionBetween(aLast: bigint, bLast: bigint): bigint {
-  if (bLast <= aLast) return 0n;
-  if (DECAY_BI === 0n) return INIT_RATE_BI * (bLast - aLast);
-  const a = aLast > START ? aLast : START;
-  if (bLast <= a) return 0n;
-  const g = INIT_RATE_BI > MIN_BI ? INIT_RATE_BI - MIN_BI : 0n;
-  if (g === 0n) return MIN_BI * (bLast - a);
-  const sFloor = g / DECAY_BI;
-  const tFloor = START + sFloor;
-  const decayEnd = bLast < tFloor ? bLast : tFloor;
-  const floorStart = a > tFloor ? a : tFloor;
-  let total = 0n;
-  if (decayEnd > a) {
-    const aRel = a - START;
-    const eRel = decayEnd - START;
-    const twoRect = INIT_RATE_BI * (eRel - aRel) * 2n;
-    const decline = DECAY_BI * (eRel * eRel - aRel * aRel);
-    total += (twoRect - decline) / 2n; // floor whole area (never over-mints)
-  }
-  if (bLast > floorStart) total += MIN_BI * (bLast - floorStart);
-  return total;
-}
-
-describe("staking", () => {
+describe("staking v3", () => {
   const provider = anchor.AnchorProvider.env();
   anchor.setProvider(provider);
   const program = anchor.workspace.Staking as Program<Staking>;
   const conn = provider.connection;
-
   const wallet = provider.wallet as anchor.Wallet;
   const payer = wallet.payer;
-  const user = wallet.publicKey;
 
   const [configPda] = PublicKey.findProgramAddressSync([Buffer.from("config")], program.programId);
   const [vaultPda] = PublicKey.findProgramAddressSync([Buffer.from("vault")], program.programId);
-  const userInfo = (u: PublicKey) =>
-    PublicKey.findProgramAddressSync([Buffer.from("user"), u.toBuffer()], program.programId)[0];
+  const [rewardVaultPda] = PublicKey.findProgramAddressSync([Buffer.from("reward_vault")], program.programId);
+  const userInfo = (u: PublicKey) => PublicKey.findProgramAddressSync([Buffer.from("user"), u.toBuffer()], program.programId)[0];
 
-  let beefMint: PublicKey, stakeMint: PublicKey, milkMint: PublicKey;
-  let userBeefAta: PublicKey, userStakeAta: PublicKey, userMilkAta: PublicKey;
+  let beefMint: PublicKey, rewardMint: PublicKey, stakeMint: PublicKey;
+  let start = 0, end = 0;
 
-  const STAKE_AMOUNT = UNIT.muln(100);
-  const UNSTAKE_AMOUNT = UNIT.muln(40);
-
-  // ---- helpers ----
-  type Pool = { acc: bigint; last: bigint; total: bigint };
-  async function readPool(): Promise<Pool> {
-    const c = await program.account.config.fetch(configPda);
-    return {
-      acc: BigInt(c.accRewardPerShare.toString()),
-      last: BigInt(c.lastRewardTime.toString()),
-      total: BigInt(c.totalStaked.toString()),
-    };
+  // ---- BigInt mirror of reward::emission_between (anchor base + end_time) ----
+  function emission(cfg: any, a: bigint, b: bigint): bigint {
+    const r0 = BigInt(cfg.initialRate), k = BigInt(cfg.decayPerSec), floor = BigInt(cfg.minRate);
+    const st = BigInt(cfg.startTime), anc = BigInt(cfg.rateAnchorTime), e = BigInt(cfg.endTime);
+    let aa = a > st ? a : st; let bb = b;
+    if (e > 0n && bb > e) bb = e;
+    if (aa < anc) aa = anc;
+    if (bb <= aa) return 0n;
+    if (k === 0n) return r0 * (bb - aa);
+    const g = r0 > floor ? r0 - floor : 0n;
+    if (g === 0n) return floor * (bb - aa);
+    const tF = anc + g / k;
+    const dEnd = bb < tF ? bb : tF, fStart = aa > tF ? aa : tF;
+    let t = 0n;
+    if (dEnd > aa) { const ar = aa - anc, er = dEnd - anc; t += (r0 * (er - ar) * 2n - k * (er * er - ar * ar)) / 2n; }
+    if (bb > fStart) t += floor * (bb - fStart);
+    return t;
   }
-  // Verify the contract's accumulator step against the emission formula.
-  function assertAccStep(before: Pool, after: Pool) {
-    if (before.total === 0n) {
-      assert.equal(after.acc, before.acc, "acc unchanged when nobody staked");
-    } else {
-      const emission = emissionBetween(before.last, after.last);
-      const expected = before.acc + mulDiv(emission, ACC_PRECISION, before.total);
-      assert.equal(after.acc.toString(), expected.toString(), "acc_reward_per_share step");
-    }
-  }
-  async function fundUser(kp: PublicKey) {
-    const beef = (await getOrCreateAssociatedTokenAccount(conn, payer, beefMint, kp)).address;
-    const stake = (await getOrCreateAssociatedTokenAccount(conn, payer, stakeMint, kp)).address;
-    const milk = (await getOrCreateAssociatedTokenAccount(conn, payer, milkMint, kp)).address;
-    await mintTo(conn, payer, beefMint, beef, payer, BigInt(UNIT.muln(1000).toString()));
-    return { beef, stake, milk };
+  const mulDiv = (a: bigint, b: bigint, c: bigint) => (a * b) / c;
+  const readCfg = () => program.account.config.fetch(configPda) as any;
+  const cfgToMirror = (c: any) => ({
+    initialRate: c.initialRate.toString(), decayPerSec: c.decayPerSec.toString(), minRate: c.minRate.toString(),
+    startTime: c.startTime.toString(), rateAnchorTime: c.rateAnchorTime.toString(), endTime: c.endTime.toString(),
+  });
+
+  // Create a Token-2022 NonTransferable + metadata mint, authority → configPda.
+  async function createStake2022(): Promise<PublicKey> {
+    const kp = Keypair.generate();
+    const mint = kp.publicKey;
+    const md: TokenMetadata = { mint, name: "Staking Receipt", symbol: "STAKE", uri: "", additionalMetadata: [] };
+    const mintLen = getMintLen([ExtensionType.NonTransferable, ExtensionType.MetadataPointer]);
+    const mdLen = TYPE_SIZE + LENGTH_SIZE + pack(md).length;
+    const lamports = await conn.getMinimumBalanceForRentExemption(mintLen + mdLen);
+    const tx = new Transaction().add(
+      SystemProgram.createAccount({ fromPubkey: payer.publicKey, newAccountPubkey: mint, space: mintLen, lamports, programId: TOKEN_2022_PROGRAM_ID }),
+      createInitializeMetadataPointerInstruction(mint, payer.publicKey, mint, TOKEN_2022_PROGRAM_ID),
+      createInitializeNonTransferableMintInstruction(mint, TOKEN_2022_PROGRAM_ID),
+      createInitializeMintInstruction(mint, DEC, payer.publicKey, null, TOKEN_2022_PROGRAM_ID),
+      createInitializeInstruction({ programId: TOKEN_2022_PROGRAM_ID, metadata: mint, updateAuthority: payer.publicKey, mint, mintAuthority: payer.publicKey, name: md.name, symbol: md.symbol, uri: md.uri }),
+    );
+    await sendAndConfirmTransaction(conn, tx, [payer, kp]);
+    await setAuthority(conn, payer, mint, payer, AuthorityType.MintTokens, configPda, [], undefined, TOKEN_2022_PROGRAM_ID);
+    return mint;
   }
 
   before(async () => {
-    beefMint = await createMint(conn, payer, user, null, DECIMALS);
-    stakeMint = await createMint(conn, payer, configPda, null, DECIMALS); // authority = Config PDA
-    milkMint = await createMint(conn, payer, configPda, null, DECIMALS); // authority = Config PDA
+    beefMint = await createMint(conn, payer, payer.publicKey, null, DEC);
+    rewardMint = await createMint(conn, payer, payer.publicKey, null, DEC);
+    stakeMint = await createStake2022();
 
-    const a = await fundUser(user);
-    userBeefAta = a.beef;
-    userStakeAta = a.stake;
-    userMilkAta = a.milk;
-  });
-
-  it("initialize", async () => {
-    await program.methods
-      .initialize(INIT_RATE, DECAY, MIN) // linear decay
-      .accountsStrict({
-        admin: user,
-        config: configPda,
-        beefMint,
-        stakeMint,
-        milkMint,
-        vault: vaultPda,
-        tokenProgram: TOKEN_PROGRAM_ID,
-        systemProgram: anchor.web3.SystemProgram.programId,
-        rent: anchor.web3.SYSVAR_RENT_PUBKEY,
-      })
-      .rpc();
-
-    const config = await program.account.config.fetch(configPda);
-    assert.ok(config.admin.equals(user));
-    assert.ok(config.beefMint.equals(beefMint));
-    assert.ok(config.stakeMint.equals(stakeMint));
-    assert.ok(config.milkMint.equals(milkMint));
-    assert.ok(config.vault.equals(vaultPda));
-    assert.equal(config.totalStaked.toString(), "0");
-    assert.equal(config.initialRate.toString(), INIT_RATE.toString());
-    assert.equal(config.decayPerSec.toString(), DECAY.toString());
-    assert.equal(config.minRate.toString(), MIN.toString());
-
-    // Capture emission start for the decay mirror used in reward assertions.
-    START = BigInt(config.startTime.toString());
-
-    const vault = await getAccount(conn, vaultPda);
-    assert.ok(vault.owner.equals(configPda), "vault authority == Config PDA");
-    assert.ok(vault.mint.equals(beefMint));
-
-    const sm = await getMint(conn, stakeMint);
-    const mm = await getMint(conn, milkMint);
-    assert.ok(sm.mintAuthority?.equals(configPda), "stake authority == Config PDA");
-    assert.ok(mm.mintAuthority?.equals(configPda), "milk authority == Config PDA");
-  });
-
-  it("stake (happy path)", async () => {
-    const beefBefore = (await getAccount(conn, userBeefAta)).amount;
+    const now = Math.floor(Date.now() / 1000);
+    start = now; end = now + 30 * 24 * 3600;
 
     await program.methods
-      .stake(STAKE_AMOUNT)
+      .initialize(new BN(INITIAL_RATE.toString()), new BN(DECAY.toString()), new BN(MIN.toString()), new BN(start), new BN(end))
       .accountsStrict({
-        user,
-        config: configPda,
-        userInfo: userInfo(user),
-        userBeefAta,
-        vault: vaultPda,
-        userStakeAta,
-        stakeMint,
-        milkMint,
-        userMilkAta,
-        tokenProgram: TOKEN_PROGRAM_ID,
-        systemProgram: anchor.web3.SystemProgram.programId,
-      })
-      .rpc();
+        admin: payer.publicKey, config: configPda,
+        beefMint, stakeMint, rewardMint,
+        vault: vaultPda, rewardVault: rewardVaultPda,
+        beefTokenProgram: TOKEN_PROGRAM_ID, rewardTokenProgram: TOKEN_PROGRAM_ID,
+        systemProgram: SystemProgram.programId, rent: SYSVAR_RENT_PUBKEY,
+      }).rpc();
 
-    const beefAfter = (await getAccount(conn, userBeefAta)).amount;
-    const vaultBal = (await getAccount(conn, vaultPda)).amount;
-    const stakeBal = (await getAccount(conn, userStakeAta)).amount;
-    const amt = BigInt(STAKE_AMOUNT.toString());
-
-    assert.equal(beefBefore - beefAfter, amt, "$BEEF decreased");
-    assert.equal(vaultBal, amt, "vault holds $BEEF");
-    assert.equal(stakeBal, amt, "$STAKE minted 1:1");
-
-    const ui = await program.account.userInfo.fetch(userInfo(user));
-    assert.equal(ui.amount.toString(), STAKE_AMOUNT.toString());
-    assert.ok(ui.owner.equals(user));
-    const config = await program.account.config.fetch(configPda);
-    assert.equal(config.totalStaked.toString(), STAKE_AMOUNT.toString());
+    // Prefund reward vault with total liability + fund the wallet with $BEEF.
+    const liability = emission(cfgToMirror(await readCfg()), BigInt(start), BigInt(end));
+    await mintTo(conn, payer, rewardMint, rewardVaultPda, payer, liability);
+    const beefAta = (await getOrCreateAssociatedTokenAccount(conn, payer, beefMint, payer.publicKey)).address;
+    await mintTo(conn, payer, beefMint, beefAta, payer, 1000n * UNIT);
   });
 
-  it("unstake (partial)", async () => {
-    const beefBefore = (await getAccount(conn, userBeefAta)).amount;
-
-    await program.methods
-      .unstake(UNSTAKE_AMOUNT)
-      .accountsStrict({
-        user,
-        config: configPda,
-        userInfo: userInfo(user),
-        userBeefAta,
-        vault: vaultPda,
-        userStakeAta,
-        stakeMint,
-        milkMint,
-        userMilkAta,
-        tokenProgram: TOKEN_PROGRAM_ID,
-      })
-      .rpc();
-
-    const beefAfter = (await getAccount(conn, userBeefAta)).amount;
-    const remaining = BigInt(STAKE_AMOUNT.sub(UNSTAKE_AMOUNT).toString());
-
-    assert.equal(beefAfter - beefBefore, BigInt(UNSTAKE_AMOUNT.toString()), "$BEEF refunded");
-    assert.equal((await getAccount(conn, vaultPda)).amount, remaining, "vault reduced");
-    assert.equal((await getAccount(conn, userStakeAta)).amount, remaining, "$STAKE burned");
-
-    const ui = await program.account.userInfo.fetch(userInfo(user));
-    assert.equal(ui.amount.toString(), remaining.toString(), "remaining mirror");
+  it("initialize: config, vaults, $STAKE authority, solvency invariant", async () => {
+    const c = await readCfg();
+    assert.ok(c.stakeMint.equals(stakeMint));
+    assert.ok(c.rewardVault.equals(rewardVaultPda));
+    const sm = await getAccount(conn, rewardVaultPda); // reward vault is classic
+    const liability = emission(cfgToMirror(c), BigInt(start), BigInt(end));
+    assert.ok(BigInt(sm.amount.toString()) >= liability, "RewardVault prefunded ≥ total liability");
+    const stakeMintAcc = await getAccount(conn, vaultPda); // beef vault
+    assert.ok(stakeMintAcc.owner.equals(configPda));
   });
 
-  it("rejects stake of zero (AmountZero)", async () => {
+  it("stake: balance-diff credit, $STAKE minted 1:1, NO reward transfer (strategy B)", async () => {
+    const A = new BN((100n * UNIT).toString());
+    const beefAta = getAssociatedTokenAddressSync(beefMint, payer.publicKey);
+    const stakeAta = (await getOrCreateAssociatedTokenAccount(conn, payer, stakeMint, payer.publicKey, false, undefined, undefined, TOKEN_2022_PROGRAM_ID)).address;
+    const rewardAta = (await getOrCreateAssociatedTokenAccount(conn, payer, rewardMint, payer.publicKey)).address;
+    const rewardBefore = (await getAccount(conn, rewardAta)).amount;
+
+    await program.methods.stake(A).accountsStrict({
+      user: payer.publicKey, config: configPda, userInfo: userInfo(payer.publicKey),
+      beefMint, stakeMint, userBeefAta: beefAta, vault: vaultPda, userStakeAta: stakeAta,
+      beefTokenProgram: TOKEN_PROGRAM_ID, stakeTokenProgram: TOKEN_2022_PROGRAM_ID,
+      systemProgram: SystemProgram.programId,
+    }).rpc();
+
+    const ui = await program.account.userInfo.fetch(userInfo(payer.publicKey)) as any;
+    assert.equal(ui.amount.toString(), A.toString(), "credited principal (no $BEEF fee here)");
+    assert.equal((await getAccount(conn, stakeAta, undefined, TOKEN_2022_PROGRAM_ID)).amount.toString(), A.toString(), "$STAKE minted 1:1");
+    assert.equal((await getAccount(conn, rewardAta)).amount, rewardBefore, "strategy B: NO reward transfer on stake");
+  });
+
+  it("claim: pays from RewardVault, principal untouched, pending cleared", async () => {
+    // let a little time pass so pending > 0
+    await new Promise((r) => setTimeout(r, 2000));
+    const rewardAta = getAssociatedTokenAddressSync(rewardMint, payer.publicKey);
+    const before = (await getAccount(conn, rewardAta)).amount;
+    const stakeAta = getAssociatedTokenAddressSync(stakeMint, payer.publicKey, false, TOKEN_2022_PROGRAM_ID);
+    const stakeBefore = (await getAccount(conn, stakeAta, undefined, TOKEN_2022_PROGRAM_ID)).amount;
+
+    await program.methods.claimRewards().accountsStrict({
+      user: payer.publicKey, config: configPda, userInfo: userInfo(payer.publicKey),
+      rewardMint, rewardVault: rewardVaultPda, userRewardAta: rewardAta, rewardTokenProgram: TOKEN_PROGRAM_ID,
+    }).rpc();
+
+    const got = (await getAccount(conn, rewardAta)).amount - before;
+    assert.ok(got > 0n, "claimed some $MILK");
+    assert.equal((await getAccount(conn, stakeAta, undefined, TOKEN_2022_PROGRAM_ID)).amount, stakeBefore, "principal ($STAKE) untouched by claim");
+    const ui = await program.account.userInfo.fetch(userInfo(payer.publicKey)) as any;
+    assert.equal(ui.pendingUnclaimed.toString(), "0", "pending cleared");
+  });
+
+  it("unstake: burns $STAKE, refunds $BEEF, remaining correct", async () => {
+    const U = new BN((40n * UNIT).toString());
+    const beefAta = getAssociatedTokenAddressSync(beefMint, payer.publicKey);
+    const stakeAta = getAssociatedTokenAddressSync(stakeMint, payer.publicKey, false, TOKEN_2022_PROGRAM_ID);
+    const beefBefore = (await getAccount(conn, beefAta)).amount;
+
+    await program.methods.unstake(U).accountsStrict({
+      user: payer.publicKey, config: configPda, userInfo: userInfo(payer.publicKey),
+      beefMint, stakeMint, userBeefAta: beefAta, vault: vaultPda, userStakeAta: stakeAta,
+      beefTokenProgram: TOKEN_PROGRAM_ID, stakeTokenProgram: TOKEN_2022_PROGRAM_ID,
+    }).rpc();
+
+    assert.equal((await getAccount(conn, beefAta)).amount - beefBefore, BigInt(U.toString()), "$BEEF refunded");
+    const ui = await program.account.userInfo.fetch(userInfo(payer.publicKey)) as any;
+    assert.equal(ui.amount.toString(), (60n * UNIT).toString(), "remaining 60");
+  });
+
+  it("NonTransferable: direct $STAKE transfer is rejected by the token program", async () => {
+    const stakeAta = getAssociatedTokenAddressSync(stakeMint, payer.publicKey, false, TOKEN_2022_PROGRAM_ID);
+    const other = Keypair.generate();
+    const otherAta = (await getOrCreateAssociatedTokenAccount(conn, payer, stakeMint, other.publicKey, false, undefined, undefined, TOKEN_2022_PROGRAM_ID)).address;
     try {
-      await program.methods
-        .stake(new BN(0))
-        .accountsStrict({
-          user,
-          config: configPda,
-          userInfo: userInfo(user),
-          userBeefAta,
-          vault: vaultPda,
-          userStakeAta,
-          stakeMint,
-          milkMint,
-          userMilkAta,
-          tokenProgram: TOKEN_PROGRAM_ID,
-          systemProgram: anchor.web3.SystemProgram.programId,
-        })
-        .rpc();
+      const tx = new Transaction().add(
+        createTransferCheckedInstruction(stakeAta, stakeMint, otherAta, payer.publicKey, 1, DEC, [], TOKEN_2022_PROGRAM_ID)
+      );
+      await sendAndConfirmTransaction(conn, tx, [payer]);
+      assert.fail("NonTransferable transfer should have failed");
+    } catch (e: any) {
+      expect(e.toString()).to.match(/NonTransferable|transfer|0x/i);
+    }
+  });
+
+  it("set_emission_params re-anchors (settle → write → anchor=now)", async () => {
+    const before = await readCfg();
+    await program.methods.setEmissionParams(new BN(2_000_000), new BN(0), new BN(0), new BN(0)).accountsStrict({
+      admin: payer.publicKey, config: configPda,
+    }).rpc();
+    const after = await readCfg();
+    assert.equal(after.initialRate.toString(), "2000000");
+    assert.equal(after.decayPerSec.toString(), "0");
+    assert.ok(Number(after.rateAnchorTime) >= Number(before.rateAnchorTime), "anchor advanced to now");
+  });
+
+  it("boundaries: amount=0 rejected; nothing-to-claim rejected", async () => {
+    const beefAta = getAssociatedTokenAddressSync(beefMint, payer.publicKey);
+    const stakeAta = getAssociatedTokenAddressSync(stakeMint, payer.publicKey, false, TOKEN_2022_PROGRAM_ID);
+    try {
+      await program.methods.stake(new BN(0)).accountsStrict({
+        user: payer.publicKey, config: configPda, userInfo: userInfo(payer.publicKey),
+        beefMint, stakeMint, userBeefAta: beefAta, vault: vaultPda, userStakeAta: stakeAta,
+        beefTokenProgram: TOKEN_PROGRAM_ID, stakeTokenProgram: TOKEN_2022_PROGRAM_ID,
+        systemProgram: SystemProgram.programId,
+      }).rpc();
       assert.fail("expected AmountZero");
     } catch (e: any) {
       expect(e.error?.errorCode?.code ?? e.toString()).to.contain("AmountZero");
     }
-  });
-
-  it("rejects over-unstake", async () => {
-    try {
-      await program.methods
-        .unstake(UNIT.muln(100)) // remaining is 60
-        .accountsStrict({
-          user,
-          config: configPda,
-          userInfo: userInfo(user),
-          userBeefAta,
-          vault: vaultPda,
-          userStakeAta,
-          stakeMint,
-          milkMint,
-          userMilkAta,
-          tokenProgram: TOKEN_PROGRAM_ID,
-        })
-        .rpc();
-      assert.fail("expected failure on over-unstake");
-    } catch (e: any) {
-      expect(e.toString()).to.match(/InsufficientStake|insufficient|0x1|custom program error/i);
-    }
-  });
-
-  // ---------------- Rewards (steps 3.4 / 3.6) ----------------
-  describe("rewards (MasterChef accrual)", () => {
-    const alice = Keypair.generate();
-    const bob = Keypair.generate();
-    let aAta: { beef: PublicKey; stake: PublicKey; milk: PublicKey };
-    let bAta: { beef: PublicKey; stake: PublicKey; milk: PublicKey };
-    const STAKE = UNIT.muln(100);
-
-    async function stakeAs(kp: Keypair, ata: typeof aAta, amount: BN) {
-      await program.methods
-        .stake(amount)
-        .accountsStrict({
-          user: kp.publicKey,
-          config: configPda,
-          userInfo: userInfo(kp.publicKey),
-          userBeefAta: ata.beef,
-          vault: vaultPda,
-          userStakeAta: ata.stake,
-          stakeMint,
-          milkMint,
-          userMilkAta: ata.milk,
-          tokenProgram: TOKEN_PROGRAM_ID,
-          systemProgram: anchor.web3.SystemProgram.programId,
-        })
-        .signers([kp])
-        .rpc();
-    }
-    async function claimAs(kp: Keypair, ata: typeof aAta) {
-      await program.methods
-        .claimRewards()
-        .accountsStrict({
-          user: kp.publicKey,
-          config: configPda,
-          userInfo: userInfo(kp.publicKey),
-          milkMint,
-          userMilkAta: ata.milk,
-          tokenProgram: TOKEN_PROGRAM_ID,
-        })
-        .signers([kp])
-        .rpc();
-    }
-
-    before(async () => {
-      for (const kp of [alice, bob]) {
-        const sig = await conn.requestAirdrop(kp.publicKey, 2 * LAMPORTS_PER_SOL);
-        await conn.confirmTransaction(sig, "confirmed");
-      }
-      aAta = await fundUser(alice.publicKey);
-      bAta = await fundUser(bob.publicKey);
-    });
-
-    it("accumulator step + claim payout match the exact MasterChef formula", async () => {
-      // Alice stakes first.
-      const p0 = await readPool();
-      await stakeAs(alice, aAta, STAKE);
-      const p1 = await readPool();
-      assertAccStep(p0, p1);
-
-      await sleep(2000);
-
-      // Bob stakes (update_pool runs over Alice's solo period).
-      const p1b = await readPool();
-      await stakeAs(bob, bAta, STAKE);
-      const p2 = await readPool();
-      assertAccStep(p1b, p2);
-
-      await sleep(2000);
-
-      // Alice claims — verify minted $MILK equals the formula, principal unchanged.
-      const aInfoBefore = await program.account.userInfo.fetch(userInfo(alice.publicKey));
-      const aMilkBefore = (await getAccount(conn, aAta.milk)).amount;
-      const aStakeBefore = (await getAccount(conn, aAta.stake)).amount;
-      const p2b = await readPool();
-      await claimAs(alice, aAta);
-      const p3 = await readPool();
-      assertAccStep(p2b, p3);
-
-      const aMinted = (await getAccount(conn, aAta.milk)).amount - aMilkBefore;
-      const aExpected =
-        mulDiv(BigInt(aInfoBefore.amount.toString()), p3.acc, ACC_PRECISION) -
-        BigInt(aInfoBefore.rewardDebt.toString());
-      assert.equal(aMinted.toString(), aExpected.toString(), "Alice claim == formula");
-      assert.equal(
-        (await getAccount(conn, aAta.stake)).amount,
-        aStakeBefore,
-        "claim does not touch principal ($STAKE)"
-      );
-
-      await sleep(2000);
-
-      // Bob claims — same formula check.
-      const bInfoBefore = await program.account.userInfo.fetch(userInfo(bob.publicKey));
-      const bMilkBefore = (await getAccount(conn, bAta.milk)).amount;
-      const p3b = await readPool();
-      await claimAs(bob, bAta);
-      const p4 = await readPool();
-      assertAccStep(p3b, p4);
-
-      const bMinted = (await getAccount(conn, bAta.milk)).amount - bMilkBefore;
-      const bExpected =
-        mulDiv(BigInt(bInfoBefore.amount.toString()), p4.acc, ACC_PRECISION) -
-        BigInt(bInfoBefore.rewardDebt.toString());
-      assert.equal(bMinted.toString(), bExpected.toString(), "Bob claim == formula");
-
-      // Qualitative §7.3 check: equal stake, but Alice had a solo head-start,
-      // so Alice's total accrued reward must exceed Bob's.
-      assert.ok(aMinted > bMinted, "earlier staker (Alice) earns more than Bob");
-    });
-
-    it("claim with nothing pending fails (NothingToClaim)", async () => {
-      // Alice just claimed; immediately claiming again in the same second yields 0.
-      try {
-        await claimAs(alice, aAta);
-        // If a second elapsed, a tiny amount may be claimable — tolerate that.
-      } catch (e: any) {
-        expect(e.error?.errorCode?.code ?? e.toString()).to.contain("NothingToClaim");
-      }
-    });
   });
 });

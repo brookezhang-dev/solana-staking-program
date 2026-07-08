@@ -1,5 +1,7 @@
-//! Solana DeFi staking program (Anchor) with MasterChef-style rewards.
-//! Architecture, account model and security: see the Technical Design Document.
+//! Solana DeFi staking program (Anchor, v3).
+//! $BEEF → 1:1 NonTransferable $STAKE; MasterChef O(1) rewards paid from a
+//! prefunded RewardVault; configurable linear-decay emission with re-anchoring
+//! and end_time. See v3 执行计划 / 技术设计文档 v3.
 
 use anchor_lang::prelude::*;
 
@@ -11,52 +13,58 @@ pub mod state;
 
 use instructions::*;
 
-// Replace with the program id produced by `anchor build`/`anchor keys list`.
-declare_id!("6boJRbzGer4vYjprjSoAz879g68JRKXHvSsATsBRaZSq");
+declare_id!("54HWhVGu8HoK46PUj3ijauVjrgNScGHyzpnvHsvZGpcv");
 
 #[program]
 pub mod staking {
     use super::*;
 
-    /// Create Config + Vault, set $STAKE/$MILK mint authority to Config PDA,
-    /// store emission params. See design doc §6.1.
+    /// Create Config + Vault + RewardVault; validate $STAKE (NonTransferable,
+    /// authority = Config PDA) and reject transfer-hook beef/reward; store params.
     pub fn initialize(
         ctx: Context<Initialize>,
         initial_rate: u64,
         decay_per_sec: u64,
         min_rate: u64,
+        start_time: i64,
+        end_time: i64,
     ) -> Result<()> {
-        instructions::initialize::handler(ctx, initial_rate, decay_per_sec, min_rate)
+        instructions::initialize::handler(ctx, initial_rate, decay_per_sec, min_rate, start_time, end_time)
     }
 
-    /// Deposit $BEEF into vault, mint equal $STAKE to user. See design doc §6.2.
+    /// Deposit $BEEF (balance-diff), mint equal $STAKE, settle pending (strategy B).
     pub fn stake(ctx: Context<Stake>, amount: u64) -> Result<()> {
         instructions::stake::handler(ctx, amount)
     }
 
-    /// Burn $STAKE, refund equal $BEEF from vault (partial allowed). See design doc §6.3.
+    /// Burn $STAKE, refund $BEEF from Vault, settle pending (strategy B).
     pub fn unstake(ctx: Context<Unstake>, amount: u64) -> Result<()> {
         instructions::unstake::handler(ctx, amount)
     }
 
-    /// Settle and mint pending $MILK rewards (decoupled from principal). See design doc §6.4.
+    /// Pay all pending_unclaimed from RewardVault (insufficient => fails).
     pub fn claim_rewards(ctx: Context<ClaimRewards>) -> Result<()> {
         instructions::claim::handler(ctx)
     }
 
-    /// Attach Metaplex Token Metadata (name/symbol) to $STAKE or $MILK so wallets
-    /// show a readable name. Admin-only; Config PDA signs the metadata CPI.
-    pub fn create_token_metadata(
-        ctx: Context<CreateTokenMetadata>,
-        name: String,
-        symbol: String,
-        uri: String,
-    ) -> Result<()> {
-        instructions::metadata::handler(ctx, name, symbol, uri)
+    /// Top up the RewardVault (anyone, in-only).
+    pub fn fund_rewards(ctx: Context<FundRewards>, amount: u64) -> Result<()> {
+        instructions::fund::handler(ctx, amount)
     }
 
-    /// Devnet faucet: mint capped test $BEEF to the caller so any new wallet can
-    /// try staking. Requires $BEEF mint authority = Config PDA.
+    /// Admin: update emission params with re-anchoring (settle → write → re-anchor).
+    pub fn set_emission_params(
+        ctx: Context<SetEmissionParams>,
+        initial_rate: u64,
+        decay_per_sec: u64,
+        min_rate: u64,
+        end_time: i64,
+    ) -> Result<()> {
+        instructions::admin::handler(ctx, initial_rate, decay_per_sec, min_rate, end_time)
+    }
+
+    /// Devnet-only faucet (compiled under `devnet-faucet` feature).
+    #[cfg(feature = "devnet-faucet")]
     pub fn faucet(ctx: Context<Faucet>, amount: u64) -> Result<()> {
         instructions::faucet::handler(ctx, amount)
     }

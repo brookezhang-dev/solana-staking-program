@@ -1,5 +1,5 @@
-//! claim_rewards: settle + mint pending $MILK (decoupled from principal). Design doc §6.4.
-//! Step 3.4. Constant emission for now (linear decay wired in reward.rs at step 3.7).
+//! claim_rewards (v3): settle → pay ALL pending_unclaimed from RewardVault
+//! (transfer_checked, PDA signs). Vault insufficient => whole tx fails (§9.1=a).
 
 use crate::constants::*;
 use crate::errors::StakingError;
@@ -7,7 +7,7 @@ use crate::events::ClaimEvent;
 use crate::instructions::reward;
 use crate::state::{Config, UserInfo};
 use anchor_lang::prelude::*;
-use anchor_spl::token::{self, Mint, MintTo, Token, TokenAccount};
+use anchor_spl::token_interface::{self, Mint, TokenAccount, TokenInterface, TransferChecked};
 
 #[derive(Accounts)]
 pub struct ClaimRewards<'info> {
@@ -25,52 +25,72 @@ pub struct ClaimRewards<'info> {
     )]
     pub user_info: Account<'info, UserInfo>,
 
-    #[account(mut, address = config.milk_mint)]
-    pub milk_mint: Account<'info, Mint>,
+    #[account(mut, address = config.reward_mint)]
+    pub reward_mint: InterfaceAccount<'info, Mint>,
+    #[account(mut, address = config.reward_vault)]
+    pub reward_vault: InterfaceAccount<'info, TokenAccount>,
+    #[account(mut, token::mint = reward_mint, token::authority = user)]
+    pub user_reward_ata: InterfaceAccount<'info, TokenAccount>,
 
-    #[account(mut, constraint = user_milk_ata.mint == config.milk_mint @ StakingError::InvalidMint)]
-    pub user_milk_ata: Account<'info, TokenAccount>,
-
-    pub token_program: Program<'info, Token>,
+    pub reward_token_program: Interface<'info, TokenInterface>,
 }
 
 pub fn handler(ctx: Context<ClaimRewards>) -> Result<()> {
     let now = Clock::get()?.unix_timestamp;
-
-    // Settle the pool first (O(1)).
     reward::update_pool(&mut ctx.accounts.config, now)?;
-
     let acc = ctx.accounts.config.acc_reward_per_share;
-    let pending = reward::pending_reward(
+
+    // Fold freshly-accrued pending into the stored pending_unclaimed.
+    let fresh = reward::pending_reward(
         ctx.accounts.user_info.amount,
         acc,
         ctx.accounts.user_info.reward_debt,
     )?;
-    require!(pending > 0, StakingError::NothingToClaim);
+    let payout = ctx
+        .accounts
+        .user_info
+        .pending_unclaimed
+        .checked_add(fresh)
+        .ok_or(StakingError::MathOverflow)?;
+    require!(payout > 0, StakingError::NothingToClaim);
 
-    // Mint $MILK to user (Config PDA signs).
+    // Solvency: RewardVault must cover the payout, else whole tx fails (§9.1=a).
+    require!(
+        ctx.accounts.reward_vault.amount >= payout,
+        StakingError::RewardVaultInsufficient
+    );
+
     let config_bump = ctx.accounts.config.bump;
-    let signer_seeds: &[&[&[u8]]] = &[&[CONFIG_SEED, &[config_bump]]];
-    token::mint_to(
+    let signer: &[&[&[u8]]] = &[&[CONFIG_SEED, &[config_bump]]];
+    token_interface::transfer_checked(
         CpiContext::new_with_signer(
-            ctx.accounts.token_program.to_account_info(),
-            MintTo {
-                mint: ctx.accounts.milk_mint.to_account_info(),
-                to: ctx.accounts.user_milk_ata.to_account_info(),
+            ctx.accounts.reward_token_program.to_account_info(),
+            TransferChecked {
+                from: ctx.accounts.reward_vault.to_account_info(),
+                mint: ctx.accounts.reward_mint.to_account_info(),
+                to: ctx.accounts.user_reward_ata.to_account_info(),
                 authority: ctx.accounts.config.to_account_info(),
             },
-            signer_seeds,
+            signer,
         ),
-        pending,
+        payout,
+        ctx.accounts.reward_mint.decimals,
     )?;
 
-    // Reset reward debt to the new baseline.
-    ctx.accounts.user_info.reward_debt =
-        reward::reward_debt_for(ctx.accounts.user_info.amount, acc)?;
+    // Effects after successful payout.
+    {
+        let ui = &mut ctx.accounts.user_info;
+        ui.pending_unclaimed = 0;
+        ui.reward_debt = reward::reward_debt_for(ui.amount, acc)?;
+    }
+    {
+        let c = &mut ctx.accounts.config;
+        c.total_claimed = c.total_claimed.checked_add(payout).ok_or(StakingError::MathOverflow)?;
+    }
 
     emit!(ClaimEvent {
         user: ctx.accounts.user.key(),
-        amount: pending,
+        amount: payout,
     });
     Ok(())
 }

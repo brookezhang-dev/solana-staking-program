@@ -15,10 +15,13 @@ no-entrypoint = []
 no-idl = []
 no-log-ix-name = []
 idl-build = ["anchor-lang/idl-build", "anchor-spl/idl-build"]
+# devnet-only self-serve $BEEF faucet. Main-net build MUST omit this feature.
+devnet-faucet = []
 
 [dependencies]
-# init_if_needed is required for the UserInfo PDA created on first stake (see design doc §5.4)
+# init_if_needed: UserInfo PDA created on first stake.
 anchor-lang = { version = "0.31.1", features = ["init-if-needed"] }
-# `metadata` feature pulls in the mpl-token-metadata CPI wrappers used by
-# create_token_metadata (so wallets show $STAKE / $MILK names).
-anchor-spl = { version = "0.31.1", features = ["metadata"] }
+# token_2022 gives the token_interface wrappers (transfer_checked / mint_to / burn
+# over classic OR Token-2022) + spl-token-2022 extension parsing (NonTransferable,
+# TransferFee, TransferHook checks in initialize).
+anchor-spl = { version = "0.31.1", features = ["token_2022"] }

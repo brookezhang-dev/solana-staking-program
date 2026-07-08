@@ -3,7 +3,7 @@
 | 项目 | 内容 |
 |---|---|
 | 评审对象 | Anchor 程序 + 测试 + 前端(`programs/staking`、`tests/`、`app/`、`scripts/`) |
-| 程序 ID | `6boJRbzGer4vYjprjSoAz879g68JRKXHvSsATsBRaZSq` |
+| 程序 ID | `54HWhVGu8HoK46PUj3ijauVjrgNScGHyzpnvHsvZGpcv` |
 | 提交人 | brooke |
 | 评审人 | _(待填:LD / mentor / peer)_ |
 | 日期 | _(待填)_ |
