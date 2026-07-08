@@ -9,8 +9,16 @@ and claim rewards independently.
 > $STAKE is a **Token-2022 NonTransferable** receipt; $MILK is an **external token**
 > paid from a **prefunded RewardVault** (program never mints it). MasterChef O(1)
 > rewards with **configurable, re-anchored, end_time-bounded** linear-decay emission.
-> Authoritative design: `v3-执行计划-EXECUTION-PLAN.md` + `设计与实现说明-DESIGN-NOTES.md`.
-> **Program ID (devnet):** `54HWhVGu8HoK46PUj3ijauVjrgNScGHyzpnvHsvZGpcv`
+
+## Live demo
+
+- **App (devnet):** https://app-inky-seven-86.vercel.app/
+- **Program (devnet):** `54HWhVGu8HoK46PUj3ijauVjrgNScGHyzpnvHsvZGpcv`
+  · [Solscan](https://solscan.io/account/54HWhVGu8HoK46PUj3ijauVjrgNScGHyzpnvHsvZGpcv?cluster=devnet)
+- **Design doc:** `Solana质押程序-技术设计文档-v3.md`
+
+Quick start: open the app, switch Phantom to **devnet**, connect a wallet, click
+**领取测试 $BEEF** (self-serve faucet), then Stake → Claim → Unstake.
 
 ## Layout
 
