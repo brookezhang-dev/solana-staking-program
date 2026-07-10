@@ -9,7 +9,7 @@ import {
   solscanTx,
 } from "./config";
 import {
-  beefMint,
+  stakedMint,
   doClaim,
   doFaucet,
   doStake,
@@ -17,11 +17,15 @@ import {
   estimatePending,
   fromBase,
   getProgram,
+  isPaused,
   rewardMint,
-  pdas,
+  configPda,
+  poolPda,
   readBalance,
-  stakeMint,
+  stakeReceiptMint,
+  stakeAtaOf,
   toBase,
+  userInfoPda,
   CLASSIC_PROGRAM,
   STAKE_PROGRAM,
 } from "./staking";
@@ -40,6 +44,7 @@ export default function App() {
   const [bal, setBal] = useState<Balances | null>(null);
   const [status, setStatus] = useState<{ msg: string; sig?: string } | null>(null);
   const [busy, setBusy] = useState(false);
+  const [paused, setPaused] = useState(false);
 
   const programReady = useMemo(() => configured && !!wallet, [wallet]);
 
@@ -47,19 +52,26 @@ export default function App() {
     if (!owner) return;
     try {
       const program = await getProgram(connection, wallet as Wallet);
-      const { config, userInfo } = pdas(program.programId, owner);
+      const config = configPda(program.programId);
+      const pool = poolPda(program.programId);
       const [beef, stake, reward] = await Promise.all([
-        readBalance(connection, beefMint(), owner, CLASSIC_PROGRAM),
-        readBalance(connection, stakeMint(), owner, STAKE_PROGRAM),
+        readBalance(connection, stakedMint(), owner, CLASSIC_PROGRAM),
+        readBalance(connection, stakeReceiptMint(), owner, STAKE_PROGRAM),
         readBalance(connection, rewardMint(), owner, CLASSIC_PROGRAM),
       ]);
       let pending = 0n;
       try {
         const cfg = await program.account.config.fetch(config);
-        const ui = await program.account.userInfo.fetch(userInfo!);
-        pending = estimatePending(cfg, ui);
+        setPaused(isPaused(cfg));
+        try {
+          const p = await program.account.pool.fetch(pool);
+          const ui = await program.account.userInfo.fetch(userInfoPda(program.programId, stakeAtaOf(owner)));
+          pending = estimatePending(p, ui, stake);
+        } catch {
+          /* pool / userInfo not created yet → no pending */
+        }
       } catch {
-        /* userInfo not created yet → no pending */
+        /* config not initialized → leave defaults */
       }
       setBal({ beef, stake, reward, pending });
     } catch (e: any) {
@@ -113,13 +125,19 @@ export default function App() {
             <div className="row"><span className="muted">Claimable $MILK (est.)</span><span>{bal ? fromBase(bal.pending) : "—"}</span></div>
           </div>
 
+          {paused && (
+            <div className="warn card">
+              池子已暂停(Paused):Stake / Claim 已禁用,Unstake 仍可随时退出本金。
+            </div>
+          )}
+
           <div className="card">
             <label className="muted">Amount</label>
             <input value={amount} onChange={(e) => setAmount(e.target.value)} inputMode="decimal" />
             <div className="grid3">
-              <button className="act" disabled={busy || !programReady} onClick={() => run("Stake", doStake, true)}>Stake</button>
+              <button className="act" disabled={busy || !programReady || paused} onClick={() => run("Stake", doStake, true)}>Stake</button>
               <button className="act" disabled={busy || !programReady} onClick={() => run("Unstake", doUnstake, true)}>Unstake</button>
-              <button className="act" disabled={busy || !programReady} onClick={() => run("Claim", doClaim, false)}>Claim</button>
+              <button className="act" disabled={busy || !programReady || paused} onClick={() => run("Claim", doClaim, false)}>Claim</button>
             </div>
             <button
               className="act ghost"

@@ -1,233 +1,253 @@
 /**
- * Anchor tests (v3). See v3 执行计划 §4.
- *
- * RUN ON LOCALNET (fresh validator each run — avoids the devnet singleton-config
- * conflict):
- *   1) set [provider] cluster = "Localnet" in Anchor.toml (or run a local validator)
- *   2) recent `solana-test-validator` bundles Token-2022 (TokenzQd…); if yours does
- *      not, add to Anchor.toml:
- *        [test.validator]
- *        url = "https://api.devnet.solana.com"
- *        [[test.validator.clone]]
- *        address = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
- *   3) anchor test
- *
- * Determinism note: emission assertions read on-chain timestamps and recompute the
- * exact integer math in a BigInt mirror (stronger than a fixed table).
+ * Anchor tests (v3.x — Config/Pool two-tier + Transfer Hook). See pool-layering spec §5.
+ * RUN ON LOCALNET: Anchor.toml [provider] cluster = "Localnet"; `anchor test`.
+ * (Recent solana-test-validator bundles Token-2022; else clone TokenzQd… in Anchor.toml.)
  */
 import * as anchor from "@coral-xyz/anchor";
 import { Program, BN } from "@coral-xyz/anchor";
 import { Staking } from "../target/types/staking";
-import { PublicKey, Keypair, SystemProgram, SYSVAR_RENT_PUBKEY, Transaction, sendAndConfirmTransaction, LAMPORTS_PER_SOL } from "@solana/web3.js";
+import {
+  PublicKey, Keypair, SystemProgram, SYSVAR_RENT_PUBKEY, Transaction, sendAndConfirmTransaction, LAMPORTS_PER_SOL,
+} from "@solana/web3.js";
 import {
   TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID, ExtensionType, getMintLen, LENGTH_SIZE, TYPE_SIZE,
   createMint, getOrCreateAssociatedTokenAccount, mintTo, getAccount, getAssociatedTokenAddressSync,
-  createInitializeMintInstruction, createInitializeNonTransferableMintInstruction,
+  createAssociatedTokenAccountIdempotent,
+  createInitializeMintInstruction, createInitializeTransferHookInstruction,
   createInitializeMetadataPointerInstruction, setAuthority, AuthorityType,
-  createTransferCheckedInstruction,
+  createTransferCheckedWithTransferHookInstruction,
 } from "@solana/spl-token";
 import { createInitializeInstruction, pack, type TokenMetadata } from "@solana/spl-token-metadata";
 import { assert, expect } from "chai";
 
 const DEC = 9;
 const UNIT = 10n ** BigInt(DEC);
-const ACC_PRECISION = 1_000_000_000_000n;
-// Emission params used by initialize.
-const INITIAL_RATE = 1_000_000n, DECAY = 1_000n, MIN = 1_000n;
+const RATE = 1_000_000n;
+const T22 = TOKEN_2022_PROGRAM_ID, CLS = TOKEN_PROGRAM_ID;
 
-describe("staking v3", () => {
+describe("staking v3.x (Config/Pool + hook)", () => {
   const provider = anchor.AnchorProvider.env();
   anchor.setProvider(provider);
   const program = anchor.workspace.Staking as Program<Staking>;
   const conn = provider.connection;
-  const wallet = provider.wallet as anchor.Wallet;
-  const payer = wallet.payer;
+  const payer = (provider.wallet as anchor.Wallet).payer;
 
   const [configPda] = PublicKey.findProgramAddressSync([Buffer.from("config")], program.programId);
-  const [vaultPda] = PublicKey.findProgramAddressSync([Buffer.from("vault")], program.programId);
-  const [rewardVaultPda] = PublicKey.findProgramAddressSync([Buffer.from("reward_vault")], program.programId);
-  const userInfo = (u: PublicKey) => PublicKey.findProgramAddressSync([Buffer.from("user"), u.toBuffer()], program.programId)[0];
+  const poolPda = (beef: PublicKey, milk: PublicKey) =>
+    PublicKey.findProgramAddressSync([Buffer.from("pool"), configPda.toBuffer(), beef.toBuffer(), milk.toBuffer()], program.programId)[0];
+  const child = (seed: string, pool: PublicKey) =>
+    PublicKey.findProgramAddressSync([Buffer.from(seed), pool.toBuffer()], program.programId)[0];
+  const uiPda = (pool: PublicKey, ata: PublicKey) =>
+    PublicKey.findProgramAddressSync([Buffer.from("user_info"), pool.toBuffer(), ata.toBuffer()], program.programId)[0];
+  const bal = async (ata: PublicKey, p = T22) => BigInt((await getAccount(conn, ata, undefined, p)).amount.toString());
 
-  let beefMint: PublicKey, rewardMint: PublicKey, stakeMint: PublicKey;
-  let start = 0, end = 0;
-
-  // ---- BigInt mirror of reward::emission_between (anchor base + end_time) ----
-  function emission(cfg: any, a: bigint, b: bigint): bigint {
-    const r0 = BigInt(cfg.initialRate), k = BigInt(cfg.decayPerSec), floor = BigInt(cfg.minRate);
-    const st = BigInt(cfg.startTime), anc = BigInt(cfg.rateAnchorTime), e = BigInt(cfg.endTime);
-    let aa = a > st ? a : st; let bb = b;
-    if (e > 0n && bb > e) bb = e;
-    if (aa < anc) aa = anc;
-    if (bb <= aa) return 0n;
-    if (k === 0n) return r0 * (bb - aa);
-    const g = r0 > floor ? r0 - floor : 0n;
-    if (g === 0n) return floor * (bb - aa);
-    const tF = anc + g / k;
-    const dEnd = bb < tF ? bb : tF, fStart = aa > tF ? aa : tF;
-    let t = 0n;
-    if (dEnd > aa) { const ar = aa - anc, er = dEnd - anc; t += (r0 * (er - ar) * 2n - k * (er * er - ar * ar)) / 2n; }
-    if (bb > fStart) t += floor * (bb - fStart);
-    return t;
-  }
-  const mulDiv = (a: bigint, b: bigint, c: bigint) => (a * b) / c;
-  const readCfg = () => program.account.config.fetch(configPda) as any;
-  const cfgToMirror = (c: any) => ({
-    initialRate: c.initialRate.toString(), decayPerSec: c.decayPerSec.toString(), minRate: c.minRate.toString(),
-    startTime: c.startTime.toString(), rateAnchorTime: c.rateAnchorTime.toString(), endTime: c.endTime.toString(),
-  });
-
-  // Create a Token-2022 NonTransferable + metadata mint, authority → configPda.
-  async function createStake2022(): Promise<PublicKey> {
-    const kp = Keypair.generate();
-    const mint = kp.publicKey;
-    const md: TokenMetadata = { mint, name: "Staking Receipt", symbol: "STAKE", uri: "", additionalMetadata: [] };
-    const mintLen = getMintLen([ExtensionType.NonTransferable, ExtensionType.MetadataPointer]);
-    const mdLen = TYPE_SIZE + LENGTH_SIZE + pack(md).length;
-    const lamports = await conn.getMinimumBalanceForRentExemption(mintLen + mdLen);
-    const tx = new Transaction().add(
-      SystemProgram.createAccount({ fromPubkey: payer.publicKey, newAccountPubkey: mint, space: mintLen, lamports, programId: TOKEN_2022_PROGRAM_ID }),
-      createInitializeMetadataPointerInstruction(mint, payer.publicKey, mint, TOKEN_2022_PROGRAM_ID),
-      createInitializeNonTransferableMintInstruction(mint, TOKEN_2022_PROGRAM_ID),
-      createInitializeMintInstruction(mint, DEC, payer.publicKey, null, TOKEN_2022_PROGRAM_ID),
-      createInitializeInstruction({ programId: TOKEN_2022_PROGRAM_ID, metadata: mint, updateAuthority: payer.publicKey, mint, mintAuthority: payer.publicKey, name: md.name, symbol: md.symbol, uri: md.uri }),
-    );
-    await sendAndConfirmTransaction(conn, tx, [payer, kp]);
-    await setAuthority(conn, payer, mint, payer, AuthorityType.MintTokens, configPda, [], undefined, TOKEN_2022_PROGRAM_ID);
+  async function stakeHookMint(pool: PublicKey): Promise<PublicKey> {
+    const kp = Keypair.generate(); const mint = kp.publicKey;
+    const meta: TokenMetadata = { mint, name: "STAKE", symbol: "STK", uri: "", additionalMetadata: [] };
+    const len = getMintLen([ExtensionType.TransferHook, ExtensionType.MetadataPointer]);
+    const mdLen = TYPE_SIZE + LENGTH_SIZE + pack(meta).length;
+    const lamports = await conn.getMinimumBalanceForRentExemption(len + mdLen);
+    await sendAndConfirmTransaction(conn, new Transaction().add(
+      SystemProgram.createAccount({ fromPubkey: payer.publicKey, newAccountPubkey: mint, space: len, lamports, programId: T22 }),
+      createInitializeMetadataPointerInstruction(mint, payer.publicKey, mint, T22),
+      createInitializeTransferHookInstruction(mint, payer.publicKey, program.programId, T22),
+      createInitializeMintInstruction(mint, DEC, payer.publicKey, null, T22),
+      createInitializeInstruction({ programId: T22, metadata: mint, updateAuthority: payer.publicKey, mint, mintAuthority: payer.publicKey, name: meta.name, symbol: meta.symbol, uri: meta.uri }),
+    ), [payer, kp]);
+    await setAuthority(conn, payer, mint, payer, AuthorityType.MintTokens, pool, [], undefined, T22);
     return mint;
   }
 
+  // create a full pool; returns its addresses.
+  async function makePool(admin = payer) {
+    const beef = await createMint(conn, payer, payer.publicKey, null, DEC);
+    const milk = await createMint(conn, payer, payer.publicKey, null, DEC);
+    const pool = poolPda(beef, milk);
+    const stake = await stakeHookMint(pool);
+    const stakedVault = child("staked_vault", pool), rewardVault = child("reward_vault", pool);
+    const [extraMeta] = PublicKey.findProgramAddressSync([Buffer.from("extra-account-metas"), stake.toBuffer()], program.programId);
+    const now = Math.floor(Date.now() / 1000), end = now + 30 * 24 * 3600;
+    await program.methods.createPool(new BN(RATE.toString()), new BN(now), new BN(end)).accountsStrict({
+      admin: admin.publicKey, config: configPda, stakedMint: beef, rewardMint: milk, stakeReceiptMint: stake,
+      pool, stakedVault, rewardVault, stakedTokenProgram: CLS, rewardTokenProgram: CLS,
+      systemProgram: SystemProgram.programId, rent: SYSVAR_RENT_PUBKEY,
+    }).signers(admin === payer ? [] : [admin]).rpc();
+    await program.methods.initializeExtraAccountMetaList().accountsStrict({
+      payer: payer.publicKey, extraAccountMetaList: extraMeta, pool, stakeMint: stake, systemProgram: SystemProgram.programId,
+    }).rpc();
+    await mintTo(conn, payer, milk, rewardVault, payer, RATE * BigInt(end - now));
+    return { beef, milk, stake, pool, stakedVault, rewardVault, end };
+  }
+
+  async function fundBeef(beef: PublicKey, owner: PublicKey, amt: bigint) {
+    const ata = (await getOrCreateAssociatedTokenAccount(conn, payer, beef, owner)).address;
+    await mintTo(conn, payer, beef, ata, payer, amt);
+    return ata;
+  }
+  async function stakeInto(P: any, user: Keypair, amount: bigint) {
+    const beefAta = getAssociatedTokenAddressSync(P.beef, user.publicKey);
+    const stakeAta = getAssociatedTokenAddressSync(P.stake, user.publicKey, false, T22);
+    await program.methods.stake(new BN(amount.toString())).accountsStrict({
+      user: user.publicKey, config: configPda, pool: P.pool, stakedMint: P.beef, stakeReceiptMint: P.stake,
+      userStakedAta: beefAta, stakedVault: P.stakedVault, userStakeAta: stakeAta, userInfo: uiPda(P.pool, stakeAta),
+      stakedTokenProgram: CLS, stakeTokenProgram: T22, systemProgram: SystemProgram.programId,
+    }).signers(user === payer ? [] : [user]).rpc();
+  }
+
   before(async () => {
-    beefMint = await createMint(conn, payer, payer.publicKey, null, DEC);
-    rewardMint = await createMint(conn, payer, payer.publicKey, null, DEC);
-    stakeMint = await createStake2022();
-
-    const now = Math.floor(Date.now() / 1000);
-    start = now; end = now + 30 * 24 * 3600;
-
-    await program.methods
-      .initialize(new BN(INITIAL_RATE.toString()), new BN(DECAY.toString()), new BN(MIN.toString()), new BN(start), new BN(end))
-      .accountsStrict({
-        admin: payer.publicKey, config: configPda,
-        beefMint, stakeMint, rewardMint,
-        vault: vaultPda, rewardVault: rewardVaultPda,
-        beefTokenProgram: TOKEN_PROGRAM_ID, rewardTokenProgram: TOKEN_PROGRAM_ID,
-        systemProgram: SystemProgram.programId, rent: SYSVAR_RENT_PUBKEY,
-      }).rpc();
-
-    // Prefund reward vault with total liability + fund the wallet with $BEEF.
-    const liability = emission(cfgToMirror(await readCfg()), BigInt(start), BigInt(end));
-    await mintTo(conn, payer, rewardMint, rewardVaultPda, payer, liability);
-    const beefAta = (await getOrCreateAssociatedTokenAccount(conn, payer, beefMint, payer.publicKey)).address;
-    await mintTo(conn, payer, beefMint, beefAta, payer, 1000n * UNIT);
-  });
-
-  it("initialize: config, vaults, $STAKE authority, solvency invariant", async () => {
-    const c = await readCfg();
-    assert.ok(c.stakeMint.equals(stakeMint));
-    assert.ok(c.rewardVault.equals(rewardVaultPda));
-    const sm = await getAccount(conn, rewardVaultPda); // reward vault is classic
-    const liability = emission(cfgToMirror(c), BigInt(start), BigInt(end));
-    assert.ok(BigInt(sm.amount.toString()) >= liability, "RewardVault prefunded ≥ total liability");
-    const stakeMintAcc = await getAccount(conn, vaultPda); // beef vault
-    assert.ok(stakeMintAcc.owner.equals(configPda));
-  });
-
-  it("stake: balance-diff credit, $STAKE minted 1:1, NO reward transfer (strategy B)", async () => {
-    const A = new BN((100n * UNIT).toString());
-    const beefAta = getAssociatedTokenAddressSync(beefMint, payer.publicKey);
-    const stakeAta = (await getOrCreateAssociatedTokenAccount(conn, payer, stakeMint, payer.publicKey, false, undefined, undefined, TOKEN_2022_PROGRAM_ID)).address;
-    const rewardAta = (await getOrCreateAssociatedTokenAccount(conn, payer, rewardMint, payer.publicKey)).address;
-    const rewardBefore = (await getAccount(conn, rewardAta)).amount;
-
-    await program.methods.stake(A).accountsStrict({
-      user: payer.publicKey, config: configPda, userInfo: userInfo(payer.publicKey),
-      beefMint, stakeMint, userBeefAta: beefAta, vault: vaultPda, userStakeAta: stakeAta,
-      beefTokenProgram: TOKEN_PROGRAM_ID, stakeTokenProgram: TOKEN_2022_PROGRAM_ID,
-      systemProgram: SystemProgram.programId,
+    await program.methods.initializeConfig().accountsStrict({
+      admin: payer.publicKey, config: configPda, systemProgram: SystemProgram.programId,
     }).rpc();
-
-    const ui = await program.account.userInfo.fetch(userInfo(payer.publicKey)) as any;
-    assert.equal(ui.amount.toString(), A.toString(), "credited principal (no $BEEF fee here)");
-    assert.equal((await getAccount(conn, stakeAta, undefined, TOKEN_2022_PROGRAM_ID)).amount.toString(), A.toString(), "$STAKE minted 1:1");
-    assert.equal((await getAccount(conn, rewardAta)).amount, rewardBefore, "strategy B: NO reward transfer on stake");
   });
 
-  it("claim: pays from RewardVault, principal untouched, pending cleared", async () => {
-    // let a little time pass so pending > 0
+  it("initialize_config: admin set, not paused", async () => {
+    const c = await program.account.config.fetch(configPda) as any;
+    assert.ok(c.admin.equals(payer.publicKey));
+    assert.equal(c.paused, false);
+  });
+
+  it("T-P1: create_pool by non-admin fails", async () => {
+    const mallory = Keypair.generate();
+    await conn.confirmTransaction(await conn.requestAirdrop(mallory.publicKey, LAMPORTS_PER_SOL));
+    try {
+      await makePool(mallory);
+      assert.fail("non-admin create_pool should fail");
+    } catch (e: any) { expect(e.error?.errorCode?.code ?? e.toString()).to.match(/Unauthorized|has_one|custom program error|0x/i); }
+  });
+
+  it("core: stake mints 1:1, claim pays, unstake burns + refunds", async () => {
+    const P = await makePool();
+    await fundBeef(P.beef, payer.publicKey, 200n * UNIT);
+    await createAssociatedTokenAccountIdempotent(conn, payer, P.stake, payer.publicKey, {}, T22);
+    await getOrCreateAssociatedTokenAccount(conn, payer, P.milk, payer.publicKey);
+    await stakeInto(P, payer, 100n * UNIT);
+    const stakeAta = getAssociatedTokenAddressSync(P.stake, payer.publicKey, false, T22);
+    assert.equal(await bal(stakeAta), 100n * UNIT);
+
     await new Promise((r) => setTimeout(r, 2000));
-    const rewardAta = getAssociatedTokenAddressSync(rewardMint, payer.publicKey);
-    const before = (await getAccount(conn, rewardAta)).amount;
-    const stakeAta = getAssociatedTokenAddressSync(stakeMint, payer.publicKey, false, TOKEN_2022_PROGRAM_ID);
-    const stakeBefore = (await getAccount(conn, stakeAta, undefined, TOKEN_2022_PROGRAM_ID)).amount;
-
+    const milkAta = getAssociatedTokenAddressSync(P.milk, payer.publicKey);
+    const before = await bal(milkAta, CLS);
     await program.methods.claimRewards().accountsStrict({
-      user: payer.publicKey, config: configPda, userInfo: userInfo(payer.publicKey),
-      rewardMint, rewardVault: rewardVaultPda, userRewardAta: rewardAta, rewardTokenProgram: TOKEN_PROGRAM_ID,
+      user: payer.publicKey, config: configPda, pool: P.pool, stakeReceiptMint: P.stake, userStakeAta: stakeAta,
+      userInfo: uiPda(P.pool, stakeAta), rewardMint: P.milk, rewardVault: P.rewardVault, userRewardAta: milkAta, rewardTokenProgram: CLS,
     }).rpc();
+    assert.ok((await bal(milkAta, CLS)) > before, "claimed > 0");
 
-    const got = (await getAccount(conn, rewardAta)).amount - before;
-    assert.ok(got > 0n, "claimed some $MILK");
-    assert.equal((await getAccount(conn, stakeAta, undefined, TOKEN_2022_PROGRAM_ID)).amount, stakeBefore, "principal ($STAKE) untouched by claim");
-    const ui = await program.account.userInfo.fetch(userInfo(payer.publicKey)) as any;
-    assert.equal(ui.pendingUnclaimed.toString(), "0", "pending cleared");
+    const beefAta = getAssociatedTokenAddressSync(P.beef, payer.publicKey);
+    const beefBefore = await bal(beefAta, CLS);
+    await program.methods.unstake(new BN((40n * UNIT).toString())).accountsStrict({
+      user: payer.publicKey, config: configPda, pool: P.pool, stakedMint: P.beef, stakeReceiptMint: P.stake,
+      userStakedAta: beefAta, stakedVault: P.stakedVault, userStakeAta: stakeAta, userInfo: uiPda(P.pool, stakeAta),
+      stakedTokenProgram: CLS, stakeTokenProgram: T22,
+    }).rpc();
+    assert.equal((await bal(beefAta, CLS)) - beefBefore, 40n * UNIT);
+    assert.equal(await bal(stakeAta), 60n * UNIT);
   });
 
-  it("unstake: burns $STAKE, refunds $BEEF, remaining correct", async () => {
-    const U = new BN((40n * UNIT).toString());
-    const beefAta = getAssociatedTokenAddressSync(beefMint, payer.publicKey);
-    const stakeAta = getAssociatedTokenAddressSync(stakeMint, payer.publicKey, false, TOKEN_2022_PROGRAM_ID);
-    const beefBefore = (await getAccount(conn, beefAta)).amount;
-
-    await program.methods.unstake(U).accountsStrict({
-      user: payer.publicKey, config: configPda, userInfo: userInfo(payer.publicKey),
-      beefMint, stakeMint, userBeefAta: beefAta, vault: vaultPda, userStakeAta: stakeAta,
-      beefTokenProgram: TOKEN_PROGRAM_ID, stakeTokenProgram: TOKEN_2022_PROGRAM_ID,
-    }).rpc();
-
-    assert.equal((await getAccount(conn, beefAta)).amount - beefBefore, BigInt(U.toString()), "$BEEF refunded");
-    const ui = await program.account.userInfo.fetch(userInfo(payer.publicKey)) as any;
-    assert.equal(ui.amount.toString(), (60n * UNIT).toString(), "remaining 60");
+  it("T-P2: two pools with different pairs are independent", async () => {
+    const A = await makePool(); const B = await makePool();
+    await fundBeef(A.beef, payer.publicKey, 100n * UNIT);
+    await fundBeef(B.beef, payer.publicKey, 100n * UNIT);
+    await createAssociatedTokenAccountIdempotent(conn, payer, A.stake, payer.publicKey, {}, T22);
+    await createAssociatedTokenAccountIdempotent(conn, payer, B.stake, payer.publicKey, {}, T22);
+    await stakeInto(A, payer, 50n * UNIT);
+    await stakeInto(B, payer, 70n * UNIT);
+    const pa = await program.account.pool.fetch(A.pool) as any;
+    const pb = await program.account.pool.fetch(B.pool) as any;
+    assert.equal(pa.totalStaked.toString(), (50n * UNIT).toString());
+    assert.equal(pb.totalStaked.toString(), (70n * UNIT).toString());
   });
 
-  it("NonTransferable: direct $STAKE transfer is rejected by the token program", async () => {
-    const stakeAta = getAssociatedTokenAddressSync(stakeMint, payer.publicKey, false, TOKEN_2022_PROGRAM_ID);
-    const other = Keypair.generate();
-    const otherAta = (await getOrCreateAssociatedTokenAccount(conn, payer, stakeMint, other.publicKey, false, undefined, undefined, TOKEN_2022_PROGRAM_ID)).address;
+  it("T-P3: duplicate pool for the same pair fails", async () => {
+    const beef = await createMint(conn, payer, payer.publicKey, null, DEC);
+    const milk = await createMint(conn, payer, payer.publicKey, null, DEC);
+    const pool = poolPda(beef, milk);
+    const stake = await stakeHookMint(pool);
+    const args: any = {
+      admin: payer.publicKey, config: configPda, stakedMint: beef, rewardMint: milk, stakeReceiptMint: stake,
+      pool, stakedVault: child("staked_vault", pool), rewardVault: child("reward_vault", pool),
+      stakedTokenProgram: CLS, rewardTokenProgram: CLS, systemProgram: SystemProgram.programId, rent: SYSVAR_RENT_PUBKEY,
+    };
+    const now = Math.floor(Date.now() / 1000);
+    await program.methods.createPool(new BN(RATE.toString()), new BN(now), new BN(now + 1000)).accountsStrict(args).rpc();
     try {
-      const tx = new Transaction().add(
-        createTransferCheckedInstruction(stakeAta, stakeMint, otherAta, payer.publicKey, 1, DEC, [], TOKEN_2022_PROGRAM_ID)
-      );
-      await sendAndConfirmTransaction(conn, tx, [payer]);
-      assert.fail("NonTransferable transfer should have failed");
-    } catch (e: any) {
-      expect(e.toString()).to.match(/NonTransferable|transfer|0x/i);
-    }
+      await program.methods.createPool(new BN(RATE.toString()), new BN(now), new BN(now + 1000)).accountsStrict(args).rpc();
+      assert.fail("duplicate pool should fail");
+    } catch (e: any) { expect(e.toString()).to.match(/already in use|custom program error|0x0/i); }
   });
 
-  it("set_emission_params re-anchors (settle → write → anchor=now)", async () => {
-    const before = await readCfg();
-    await program.methods.setEmissionParams(new BN(2_000_000), new BN(0), new BN(0), new BN(0)).accountsStrict({
-      admin: payer.publicKey, config: configPda,
-    }).rpc();
-    const after = await readCfg();
-    assert.equal(after.initialRate.toString(), "2000000");
-    assert.equal(after.decayPerSec.toString(), "0");
-    assert.ok(Number(after.rateAnchorTime) >= Number(before.rateAnchorTime), "anchor advanced to now");
-  });
-
-  it("boundaries: amount=0 rejected; nothing-to-claim rejected", async () => {
-    const beefAta = getAssociatedTokenAddressSync(beefMint, payer.publicKey);
-    const stakeAta = getAssociatedTokenAddressSync(stakeMint, payer.publicKey, false, TOKEN_2022_PROGRAM_ID);
+  it("T-P4 (isolation): unstake on pool A with pool B's vault is rejected", async () => {
+    const A = await makePool(); const B = await makePool();
+    await fundBeef(A.beef, payer.publicKey, 50n * UNIT);
+    await createAssociatedTokenAccountIdempotent(conn, payer, A.stake, payer.publicKey, {}, T22);
+    await stakeInto(A, payer, 50n * UNIT);
+    const beefAta = getAssociatedTokenAddressSync(A.beef, payer.publicKey);
+    const stakeAta = getAssociatedTokenAddressSync(A.stake, payer.publicKey, false, T22);
     try {
-      await program.methods.stake(new BN(0)).accountsStrict({
-        user: payer.publicKey, config: configPda, userInfo: userInfo(payer.publicKey),
-        beefMint, stakeMint, userBeefAta: beefAta, vault: vaultPda, userStakeAta: stakeAta,
-        beefTokenProgram: TOKEN_PROGRAM_ID, stakeTokenProgram: TOKEN_2022_PROGRAM_ID,
-        systemProgram: SystemProgram.programId,
+      await program.methods.unstake(new BN((10n * UNIT).toString())).accountsStrict({
+        user: payer.publicKey, config: configPda, pool: A.pool, stakedMint: A.beef, stakeReceiptMint: A.stake,
+        userStakedAta: beefAta, stakedVault: B.stakedVault /* WRONG POOL */, userStakeAta: stakeAta, userInfo: uiPda(A.pool, stakeAta),
+        stakedTokenProgram: CLS, stakeTokenProgram: T22,
       }).rpc();
-      assert.fail("expected AmountZero");
-    } catch (e: any) {
-      expect(e.error?.errorCode?.code ?? e.toString()).to.contain("AmountZero");
-    }
+      assert.fail("cross-pool vault must be rejected");
+    } catch (e: any) { expect(e.toString()).to.match(/constraint|address|custom program error|0x/i); }
+  });
+
+  it("T-P5: pause blocks stake/claim, not unstake; unpause restores", async () => {
+    const P = await makePool();
+    await fundBeef(P.beef, payer.publicKey, 50n * UNIT);
+    await createAssociatedTokenAccountIdempotent(conn, payer, P.stake, payer.publicKey, {}, T22);
+    await stakeInto(P, payer, 30n * UNIT);
+    await program.methods.setPause(true).accountsStrict({ admin: payer.publicKey, config: configPda }).rpc();
+    try {
+      await stakeInto(P, payer, 1n * UNIT); assert.fail("paused stake");
+    } catch (e: any) { expect(e.error?.errorCode?.code ?? e.toString()).to.match(/Paused|0x/i); }
+    // unstake still works
+    const beefAta = getAssociatedTokenAddressSync(P.beef, payer.publicKey);
+    const stakeAta = getAssociatedTokenAddressSync(P.stake, payer.publicKey, false, T22);
+    await program.methods.unstake(new BN((10n * UNIT).toString())).accountsStrict({
+      user: payer.publicKey, config: configPda, pool: P.pool, stakedMint: P.beef, stakeReceiptMint: P.stake,
+      userStakedAta: beefAta, stakedVault: P.stakedVault, userStakeAta: stakeAta, userInfo: uiPda(P.pool, stakeAta),
+      stakedTokenProgram: CLS, stakeTokenProgram: T22,
+    }).rpc();
+    await program.methods.setPause(false).accountsStrict({ admin: payer.publicKey, config: configPda }).rpc();
+    const c = await program.account.config.fetch(configPda) as any;
+    assert.equal(c.paused, false);
+  });
+
+  it("T-P7: transfer_admin moves create_pool rights", async () => {
+    const newAdmin = Keypair.generate();
+    await program.methods.transferAdmin(newAdmin.publicKey).accountsStrict({ admin: payer.publicKey, config: configPda }).rpc();
+    const c = await program.account.config.fetch(configPda) as any;
+    assert.ok(c.admin.equals(newAdmin.publicKey));
+    // old admin can no longer pause
+    try {
+      await program.methods.setPause(true).accountsStrict({ admin: payer.publicKey, config: configPda }).rpc();
+      assert.fail("old admin should be rejected");
+    } catch (e: any) { expect(e.toString()).to.match(/Unauthorized|has_one|0x/i); }
+    // restore admin for any later runs
+    await program.methods.transferAdmin(payer.publicKey).accountsStrict({ admin: newAdmin.publicKey, config: configPda }).signers([newAdmin]).rpc();
+  });
+
+  it("hook: transfer between registered users settles both sides", async () => {
+    const P = await makePool();
+    const bob = Keypair.generate();
+    await conn.confirmTransaction(await conn.requestAirdrop(bob.publicKey, LAMPORTS_PER_SOL));
+    await fundBeef(P.beef, payer.publicKey, 100n * UNIT);
+    const aliceStake = await createAssociatedTokenAccountIdempotent(conn, payer, P.stake, payer.publicKey, {}, T22);
+    const bobStake = await createAssociatedTokenAccountIdempotent(conn, payer, P.stake, bob.publicKey, {}, T22);
+    await stakeInto(P, payer, 100n * UNIT);
+    // register Bob's stake account (required before receiving)
+    await program.methods.register().accountsStrict({
+      payer: payer.publicKey, config: configPda, pool: P.pool, stakeReceiptMint: P.stake,
+      stakeTokenAccount: bobStake, userInfo: uiPda(P.pool, bobStake), systemProgram: SystemProgram.programId,
+    }).rpc();
+    await new Promise((r) => setTimeout(r, 1500));
+    const ix = await createTransferCheckedWithTransferHookInstruction(conn, aliceStake, P.stake, bobStake, payer.publicKey, 40n * UNIT, DEC, [], "confirmed", T22);
+    await sendAndConfirmTransaction(conn, new Transaction().add(ix), [payer]);
+    assert.equal(await bal(aliceStake), 60n * UNIT);
+    assert.equal(await bal(bobStake), 40n * UNIT);
+    const aui = await program.account.userInfo.fetch(uiPda(P.pool, aliceStake)) as any;
+    assert.ok(BigInt(aui.pendingUnclaimed) > 0n, "sender pending settled home");
   });
 });

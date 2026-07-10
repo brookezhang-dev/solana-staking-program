@@ -1,53 +1,65 @@
-//! Account state definitions (v3). See v3 执行计划 §1.2.
+//! Account state (v3.x — Config/Pool two-tier). Mirrors Raydium AmmConfig→Pool /
+//! Orca WhirlpoolsConfig→Whirlpool: one protocol Config, N on-demand Pools.
 
 use anchor_lang::prelude::*;
 
-/// Global config + reward-pool state. PDA: seeds = [CONFIG_SEED].
-/// Also acts as authority of both vaults AND the $STAKE mint authority.
-/// $MILK/reward mint authority is NOT held by the program (prefunded-vault model).
+/// Tier 1 — protocol singleton. PDA: seeds = [CONFIG_SEED].
+/// Holds ONLY protocol-level state; all pool accounting lives in `Pool`.
 #[account]
 pub struct Config {
-    pub admin: Pubkey,               // 32  admin (emission params only)
-    pub beef_mint: Pubkey,          // 32  input token mint (classic or 2022)
-    pub stake_mint: Pubkey,         // 32  receipt mint (Token-2022 + NonTransferable)
-    pub reward_mint: Pubkey,        // 32  reward mint (external; any SPL)
-    pub vault: Pubkey,              // 32  $BEEF principal vault
-    pub reward_vault: Pubkey,       // 32  reward vault (prefunded)
-    pub total_staked: u64,          //  8
-    pub acc_reward_per_share: u128, // 16  scaled by ACC_PRECISION
-    pub last_reward_time: i64,      //  8  last pool-settlement ts
-    pub start_time: i64,            //  8  emission start (fixed; no-accrual clamp)
-    pub rate_anchor_time: i64,      //  8  decay curve anchor; reset to now on set_emission_params
-    pub end_time: i64,              //  8  emission end; 0 = uncapped
-    pub initial_rate: u64,          //  8  rate at anchor (base units / sec)
-    pub decay_per_sec: u64,         //  8  linear decay per second (0 = constant)
-    pub min_rate: u64,              //  8  rate floor
-    pub total_claimed: u64,         //  8  cumulative reward paid out (water-level bot)
-    pub bump: u8,                   //  1
-    pub vault_bump: u8,             //  1
-    pub reward_vault_bump: u8,      //  1
-    pub reserved: [u8; 64],         // 64  upgrade headroom — do NOT remove
+    pub admin: Pubkey,       // 32  protocol admin (create_pool / set_pause / set_emission / transfer_admin)
+    pub pool_count: u16,     //  2  bookkeeping only (pool identity is the mint pair)
+    pub paused: bool,        //  1  global emergency stop; every user ix checks it
+    pub bump: u8,            //  1
+    pub reserved: [u8; 64],  // 64
 }
 
 impl Config {
-    // 32*6 + (8*9 + 16) + 3 + 64 = 192 + 88 + 3 + 64 = 347
-    pub const SPACE: usize = 347;
+    // 32 + 2 + 1 + 1 + 64 = 100 ; account = 8 + 100 = 108
+    pub const SPACE: usize = 100;
 }
 
-/// Per-user state. PDA: seeds = [USER_SEED, user_pubkey].
-/// `amount` is the SOLE principal ledger (redeem limit AND reward share both use it).
-/// With NonTransferable $STAKE, `amount ≡ 用户 $STAKE 余额` holds physically.
+/// Tier 2 — one per (staked_mint, reward_mint) pair.
+/// PDA: seeds = [POOL_SEED, config, staked_mint, reward_mint]. The Pool PDA is the
+/// authority of its two vaults AND the $STAKE receipt mint (per-pool dual role).
+#[account]
+pub struct Pool {
+    pub config: Pubkey,             // 32
+    pub staked_mint: Pubkey,        // 32  input token (e.g. $BEEF)
+    pub reward_mint: Pubkey,        // 32  reward token (e.g. $MILK; external)
+    pub stake_receipt_mint: Pubkey, // 32  this pool's $STAKE (Token-2022 TransferHook)
+    pub staked_vault: Pubkey,       // 32
+    pub reward_vault: Pubkey,       // 32
+    pub acc_reward_per_share: u128, // 16  scaled by ACC_PRECISION
+    pub last_reward_time: i64,      //  8
+    pub start_time: i64,            //  8
+    pub end_time: i64,              //  8  0 = uncapped
+    pub reward_per_sec: u64,        //  8  constant emission rate
+    pub total_emitted: u128,        // 16  only ++ in update_pool (surplus liability)
+    pub total_staked: u64,          //  8  == stake_receipt_mint.supply
+    pub total_claimed: u64,         //  8
+    pub bump: u8,                   //  1
+    pub reserved: [u8; 64],         // 64
+}
+
+impl Pool {
+    // 32*6 + (16+8+8+8+8+16+8+8) + 1 + 64 = 192 + 80 + 1 + 64 = 337 ; account = 8 + 337 = 345
+    pub const SPACE: usize = 337;
+}
+
+/// Per-$STAKE-token-account reward state. PDA: seeds = [USER_SEED, pool, token_account].
+/// The token-account BALANCE is the share authority; this struct holds only MasterChef
+/// bookkeeping. Keyed by token account so the transfer hook can settle both parties.
 #[account]
 pub struct UserInfo {
-    pub owner: Pubkey,          // 32
-    pub amount: u64,            //  8  ★ sole principal ledger
+    pub token_account: Pubkey,  // 32  the $STAKE ATA this state tracks
     pub reward_debt: u128,      // 16
-    pub pending_unclaimed: u64, //  8  settled-but-unclaimed reward (strategy B)
+    pub pending_unclaimed: u64, //  8
     pub bump: u8,               //  1
-    pub reserved: [u8; 16],     // 16  upgrade headroom
+    pub reserved: [u8; 32],     // 32
 }
 
 impl UserInfo {
-    // 32 + 8 + 16 + 8 + 1 + 16 = 81
-    pub const SPACE: usize = 81;
+    // 32 + 16 + 8 + 1 + 32 = 89 ; account = 8 + 89 = 97
+    pub const SPACE: usize = 89;
 }

@@ -1,16 +1,29 @@
-//! Events for frontend / indexing / water-level monitoring (v3).
+//! Events (v3.x — Config/Pool two-tier).
 
 use anchor_lang::prelude::*;
 
 #[event]
+pub struct PoolCreated {
+    pub pool: Pubkey,
+    pub staked_mint: Pubkey,
+    pub reward_mint: Pubkey,
+    pub stake_receipt_mint: Pubkey,
+    pub reward_per_sec: u64,
+    pub start_time: i64,
+    pub end_time: i64,
+}
+
+#[event]
 pub struct StakeEvent {
+    pub pool: Pubkey,
     pub user: Pubkey,
-    pub credited: u64, // actual principal credited (balance-diff; fee-token safe)
-    pub total: u64,    // user_info.amount after
+    pub credited: u64, // actual principal credited (balance-diff)
+    pub total: u64,    // $STAKE balance after
 }
 
 #[event]
 pub struct UnstakeEvent {
+    pub pool: Pubkey,
     pub user: Pubkey,
     pub amount: u64,
     pub remaining: u64,
@@ -18,25 +31,48 @@ pub struct UnstakeEvent {
 
 #[event]
 pub struct ClaimEvent {
+    pub pool: Pubkey,
     pub user: Pubkey,
-    pub amount: u64, // pending_unclaimed paid out (nominal)
+    pub amount: u64,
 }
 
-/// Emitted by fund_rewards — water-level bot tracks solvency from this + ClaimEvent.
 #[event]
 pub struct FundEvent {
+    pub pool: Pubkey,
     pub funder: Pubkey,
-    pub credited: u64,            // actual amount received by reward vault
-    pub reward_vault_balance: u64, // vault balance after
+    pub credited: u64,
+    pub reward_vault_balance: u64,
 }
 
-/// Emitted by set_emission_params — records the re-anchoring.
 #[event]
-pub struct EmissionParamsUpdatedEvent {
-    pub admin: Pubkey,
-    pub initial_rate: u64,
-    pub decay_per_sec: u64,
-    pub min_rate: u64,
+pub struct EmissionSet {
+    pub pool: Pubkey,
+    pub reward_per_sec: u64,
     pub end_time: i64,
-    pub rate_anchor_time: i64, // = now (new curve origin)
+}
+
+#[event]
+pub struct SurplusWithdrawn {
+    pub pool: Pubkey,
+    pub admin: Pubkey,
+    pub amount: u64,
+    pub reward_vault_balance: u64,
+}
+
+#[event]
+pub struct UserInfoClosed {
+    pub pool: Pubkey,
+    pub user: Pubkey,
+}
+
+#[event]
+pub struct PauseSet {
+    pub admin: Pubkey,
+    pub paused: bool,
+}
+
+#[event]
+pub struct AdminTransferred {
+    pub old_admin: Pubkey,
+    pub new_admin: Pubkey,
 }

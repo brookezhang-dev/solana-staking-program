@@ -10,13 +10,13 @@ skip-lint = false
 staking = "54HWhVGu8HoK46PUj3ijauVjrgNScGHyzpnvHsvZGpcv"
 
 [programs.localnet]
-staking = "6boJRbzGer4vYjprjSoAz879g68JRKXHvSsATsBRaZSq"
+staking = "54HWhVGu8HoK46PUj3ijauVjrgNScGHyzpnvHsvZGpcv"
 
 [registry]
 url = "https://api.apr.dev"
 
 [provider]
-cluster = "devnet"
+cluster = "Localnet"
 wallet = "~/.config/solana/id.json"
 
 [scripts]

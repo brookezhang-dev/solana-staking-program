@@ -1,112 +1,119 @@
-//! stake (v3): transfer $BEEF in (balance-diff, fee-token safe), mint equal $STAKE,
-//! settle pending into pending_unclaimed (strategy B, no reward transfer). §1.3.
+//! stake (v3.x): pool-scoped, balance-authoritative. Transfer staked token in
+//! (balance-diff), mint equal $STAKE, settle pending into pending_unclaimed (strategy B).
+//! Cross-pool isolation: every child account is bound to `pool`.
 
 use crate::constants::*;
 use crate::errors::StakingError;
 use crate::events::StakeEvent;
 use crate::instructions::reward;
-use crate::state::{Config, UserInfo};
+use crate::state::{Config, Pool, UserInfo};
 use anchor_lang::prelude::*;
-use anchor_spl::token_interface::{
-    self, Mint, MintTo, TokenAccount, TokenInterface, TransferChecked,
-};
+use anchor_spl::token_interface::{self, Mint, MintTo, TokenAccount, TokenInterface, TransferChecked};
 
 #[derive(Accounts)]
 pub struct Stake<'info> {
     #[account(mut)]
     pub user: Signer<'info>,
 
-    #[account(mut, seeds = [CONFIG_SEED], bump = config.bump)]
+    #[account(seeds = [CONFIG_SEED], bump = config.bump)]
     pub config: Account<'info, Config>,
+
+    #[account(
+        mut,
+        seeds = [POOL_SEED, config.key().as_ref(), pool.staked_mint.as_ref(), pool.reward_mint.as_ref()],
+        bump = pool.bump,
+        constraint = pool.config == config.key() @ StakingError::PoolConfigMismatch,
+    )]
+    pub pool: Account<'info, Pool>,
+
+    #[account(mut, address = pool.staked_mint)]
+    pub staked_mint: Box<InterfaceAccount<'info, Mint>>,
+    #[account(mut, address = pool.stake_receipt_mint)]
+    pub stake_receipt_mint: Box<InterfaceAccount<'info, Mint>>,
+
+    #[account(mut, token::mint = staked_mint, token::authority = user)]
+    pub user_staked_ata: Box<InterfaceAccount<'info, TokenAccount>>,
+    #[account(mut, address = pool.staked_vault)]
+    pub staked_vault: Box<InterfaceAccount<'info, TokenAccount>>,
+    #[account(mut, token::mint = stake_receipt_mint, token::authority = user)]
+    pub user_stake_ata: Box<InterfaceAccount<'info, TokenAccount>>,
 
     #[account(
         init_if_needed,
         payer = user,
         space = 8 + UserInfo::SPACE,
-        seeds = [USER_SEED, user.key().as_ref()],
+        seeds = [USER_SEED, pool.key().as_ref(), user_stake_ata.key().as_ref()],
         bump
     )]
     pub user_info: Account<'info, UserInfo>,
 
-    #[account(mut, address = config.beef_mint)]
-    pub beef_mint: InterfaceAccount<'info, Mint>,
-    #[account(mut, address = config.stake_mint)]
-    pub stake_mint: InterfaceAccount<'info, Mint>,
-
-    #[account(mut, token::mint = beef_mint, token::authority = user)]
-    pub user_beef_ata: InterfaceAccount<'info, TokenAccount>,
-    #[account(mut, address = config.vault)]
-    pub vault: InterfaceAccount<'info, TokenAccount>,
-    #[account(mut, token::mint = stake_mint, token::authority = user)]
-    pub user_stake_ata: InterfaceAccount<'info, TokenAccount>,
-
-    pub beef_token_program: Interface<'info, TokenInterface>,
+    pub staked_token_program: Interface<'info, TokenInterface>,
     pub stake_token_program: Interface<'info, TokenInterface>,
     pub system_program: Program<'info, System>,
 }
 
 pub fn handler(ctx: Context<Stake>, amount: u64) -> Result<()> {
     require!(amount > 0, StakingError::AmountZero);
+    require!(!ctx.accounts.config.paused, StakingError::Paused);
     let now = Clock::get()?.unix_timestamp;
 
-    reward::update_pool(&mut ctx.accounts.config, now)?;
-    let acc = ctx.accounts.config.acc_reward_per_share;
-    let config_bump = ctx.accounts.config.bump;
+    reward::update_pool(&mut ctx.accounts.pool, now)?;
+    let acc = ctx.accounts.pool.acc_reward_per_share;
 
-    // Strategy B: settle pending against OLD amount → accumulate into pending_unclaimed.
-    let old_amount = ctx.accounts.user_info.amount;
-    let pending = reward::pending_reward(old_amount, acc, ctx.accounts.user_info.reward_debt)?;
+    let pre = ctx.accounts.user_stake_ata.amount;
+    let pending = reward::pending_reward(pre, acc, ctx.accounts.user_info.reward_debt)?;
 
-    // Transfer $BEEF in; credit the ACTUAL received amount (balance-diff, fee-token safe).
-    let before = ctx.accounts.vault.amount;
+    // Transfer staked token in; credit ACTUAL received (balance-diff, fee-token safe).
+    let before = ctx.accounts.staked_vault.amount;
     token_interface::transfer_checked(
         CpiContext::new(
-            ctx.accounts.beef_token_program.to_account_info(),
+            ctx.accounts.staked_token_program.to_account_info(),
             TransferChecked {
-                from: ctx.accounts.user_beef_ata.to_account_info(),
-                mint: ctx.accounts.beef_mint.to_account_info(),
-                to: ctx.accounts.vault.to_account_info(),
+                from: ctx.accounts.user_staked_ata.to_account_info(),
+                mint: ctx.accounts.staked_mint.to_account_info(),
+                to: ctx.accounts.staked_vault.to_account_info(),
                 authority: ctx.accounts.user.to_account_info(),
             },
         ),
         amount,
-        ctx.accounts.beef_mint.decimals,
+        ctx.accounts.staked_mint.decimals,
     )?;
-    ctx.accounts.vault.reload()?;
+    ctx.accounts.staked_vault.reload()?;
     let credited = ctx
         .accounts
-        .vault
+        .staked_vault
         .amount
         .checked_sub(before)
         .ok_or(StakingError::MathOverflow)?;
-    require!(credited > 0, StakingError::ZeroCredited);
+    require!(credited > 0, StakingError::AmountZero);
 
-    // Effects.
+    let post = pre.checked_add(credited).ok_or(StakingError::MathOverflow)?;
+
     {
         let ui = &mut ctx.accounts.user_info;
-        ui.owner = ctx.accounts.user.key();
+        ui.token_account = ctx.accounts.user_stake_ata.key();
         ui.bump = ctx.bumps.user_info;
-        ui.pending_unclaimed = ui
-            .pending_unclaimed
-            .checked_add(pending)
-            .ok_or(StakingError::MathOverflow)?;
-        ui.amount = ui.amount.checked_add(credited).ok_or(StakingError::MathOverflow)?;
-        ui.reward_debt = reward::reward_debt_for(ui.amount, acc)?;
+        ui.pending_unclaimed = ui.pending_unclaimed.checked_add(pending).ok_or(StakingError::MathOverflow)?;
+        ui.reward_debt = reward::reward_debt_for(post, acc)?;
     }
     {
-        let c = &mut ctx.accounts.config;
-        c.total_staked = c.total_staked.checked_add(credited).ok_or(StakingError::MathOverflow)?;
+        let p = &mut ctx.accounts.pool;
+        p.total_staked = p.total_staked.checked_add(credited).ok_or(StakingError::MathOverflow)?;
     }
 
-    // Mint receipt $STAKE = credited (1:1 with actual principal). Config PDA signs.
-    let signer: &[&[&[u8]]] = &[&[CONFIG_SEED, &[config_bump]]];
+    // Mint $STAKE = credited (Pool PDA signs; does not trigger the hook).
+    let cfg = ctx.accounts.pool.config;
+    let sm = ctx.accounts.pool.staked_mint;
+    let rm = ctx.accounts.pool.reward_mint;
+    let pb = ctx.accounts.pool.bump;
+    let signer: &[&[&[u8]]] = &[&[POOL_SEED, cfg.as_ref(), sm.as_ref(), rm.as_ref(), &[pb]]];
     token_interface::mint_to(
         CpiContext::new_with_signer(
             ctx.accounts.stake_token_program.to_account_info(),
             MintTo {
-                mint: ctx.accounts.stake_mint.to_account_info(),
+                mint: ctx.accounts.stake_receipt_mint.to_account_info(),
                 to: ctx.accounts.user_stake_ata.to_account_info(),
-                authority: ctx.accounts.config.to_account_info(),
+                authority: ctx.accounts.pool.to_account_info(),
             },
             signer,
         ),
@@ -114,9 +121,10 @@ pub fn handler(ctx: Context<Stake>, amount: u64) -> Result<()> {
     )?;
 
     emit!(StakeEvent {
+        pool: ctx.accounts.pool.key(),
         user: ctx.accounts.user.key(),
         credited,
-        total: ctx.accounts.user_info.amount,
+        total: post,
     });
     Ok(())
 }

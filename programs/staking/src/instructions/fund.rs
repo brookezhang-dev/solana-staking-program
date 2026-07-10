@@ -1,11 +1,9 @@
-//! fund_rewards (v3): anyone tops up the RewardVault (in-only). Balance-diff so
-//! fee-token rewards credit the actual received amount. Emits FundEvent for the
-//! off-chain water-level monitor. §1.3.
+//! fund_rewards (v3.x): anyone tops up a pool's reward vault (in-only). Balance-diff.
 
 use crate::constants::*;
 use crate::errors::StakingError;
 use crate::events::FundEvent;
-use crate::state::Config;
+use crate::state::{Config, Pool};
 use anchor_lang::prelude::*;
 use anchor_spl::token_interface::{self, Mint, TokenAccount, TokenInterface, TransferChecked};
 
@@ -17,9 +15,16 @@ pub struct FundRewards<'info> {
     #[account(seeds = [CONFIG_SEED], bump = config.bump)]
     pub config: Account<'info, Config>,
 
-    #[account(mut, address = config.reward_mint)]
+    #[account(
+        seeds = [POOL_SEED, config.key().as_ref(), pool.staked_mint.as_ref(), pool.reward_mint.as_ref()],
+        bump = pool.bump,
+        constraint = pool.config == config.key() @ StakingError::PoolConfigMismatch,
+    )]
+    pub pool: Account<'info, Pool>,
+
+    #[account(mut, address = pool.reward_mint)]
     pub reward_mint: InterfaceAccount<'info, Mint>,
-    #[account(mut, address = config.reward_vault)]
+    #[account(mut, address = pool.reward_vault)]
     pub reward_vault: InterfaceAccount<'info, TokenAccount>,
     #[account(mut, token::mint = reward_mint, token::authority = funder)]
     pub funder_reward_ata: InterfaceAccount<'info, TokenAccount>,
@@ -29,7 +34,6 @@ pub struct FundRewards<'info> {
 
 pub fn handler(ctx: Context<FundRewards>, amount: u64) -> Result<()> {
     require!(amount > 0, StakingError::AmountZero);
-
     let before = ctx.accounts.reward_vault.amount;
     token_interface::transfer_checked(
         CpiContext::new(
@@ -45,14 +49,10 @@ pub fn handler(ctx: Context<FundRewards>, amount: u64) -> Result<()> {
         ctx.accounts.reward_mint.decimals,
     )?;
     ctx.accounts.reward_vault.reload()?;
-    let credited = ctx
-        .accounts
-        .reward_vault
-        .amount
-        .checked_sub(before)
-        .ok_or(StakingError::MathOverflow)?;
+    let credited = ctx.accounts.reward_vault.amount.checked_sub(before).ok_or(StakingError::MathOverflow)?;
 
     emit!(FundEvent {
+        pool: ctx.accounts.pool.key(),
         funder: ctx.accounts.funder.key(),
         credited,
         reward_vault_balance: ctx.accounts.reward_vault.amount,

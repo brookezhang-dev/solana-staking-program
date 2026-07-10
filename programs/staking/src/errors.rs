@@ -1,4 +1,4 @@
-//! Error codes (v3).
+//! Error codes (v3.x).
 
 use anchor_lang::prelude::*;
 
@@ -16,22 +16,32 @@ pub enum StakingError {
     Unauthorized,
     #[msg("invalid mint")]
     InvalidMint,
-    #[msg("pool not initialized")]
-    NotInitialized,
     #[msg("faucet amount exceeds the per-call cap")]
     FaucetTooMuch,
 
-    // ---- v3 additions ----
+    // ---- reward vault / emission ----
     #[msg("reward vault balance insufficient to pay pending")]
     RewardVaultInsufficient,
-    #[msg("emission params invalid: require min_rate <= initial_rate")]
-    InvalidEmissionParams,
-    #[msg("end_time invalid: must be 0 or > now and > start_time")]
-    InvalidEndTime,
-    #[msg("stake mint must be a Token-2022 NonTransferable mint")]
-    StakeMintNotNonTransferable,
-    #[msg("token has an unsupported extension (transfer fee / transfer hook)")]
+    #[msg("stake mint must carry a TransferHook extension pointing at this program")]
+    StakeMintHookMismatch,
+    #[msg("token has an unsupported extension (transfer hook on staked/reward)")]
     UnsupportedTokenExtension,
-    #[msg("credited amount is zero after transfer (all consumed by fee?)")]
-    ZeroCredited,
+    #[msg("invalid time range: end_time must be 0 or > now and > start_time")]
+    InvalidTimeRange,
+
+    // ---- transfer hook ----
+    #[msg("hook execute must be invoked by Token-2022 during a transfer")]
+    NotTransferring,
+    #[msg("destination $STAKE account has no UserInfo — call register first")]
+    DestinationNotRegistered,
+
+    // ---- lifecycle / two-tier ----
+    #[msg("protocol is paused")]
+    Paused,
+    #[msg("nothing to withdraw: amount exceeds surplus")]
+    NothingToWithdraw,
+    #[msg("user_info not empty: require balance == 0 && pending_unclaimed == 0")]
+    AccountNotEmpty,
+    #[msg("pool config mismatch")]
+    PoolConfigMismatch,
 }

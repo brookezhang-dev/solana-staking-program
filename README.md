@@ -6,9 +6,36 @@ and claim rewards independently.
 
 > **Status: v3, deployed to devnet.** 6 instructions (initialize / stake / unstake /
 > claim_rewards / fund_rewards / set_emission_params, + devnet-only faucet).
-> $STAKE is a **Token-2022 NonTransferable** receipt; $MILK is an **external token**
-> paid from a **prefunded RewardVault** (program never mints it). MasterChef O(1)
-> rewards with **configurable, re-anchored, end_time-bounded** linear-decay emission.
+> **v3.1: $STAKE is now TRANSFERABLE** — a Token-2022 **TransferHook** certificate;
+> the token-account **balance is the ledger authority** and every transfer routes
+> through the program's hook, which settles both parties' rewards atomically.
+> $MILK is an **external token** paid from a **prefunded RewardVault** (program never
+> mints it). MasterChef O(1) rewards with configurable constant-rate, end_time-bounded emission.
+
+## Architecture (v3.x — two-tier)
+
+One deployment, many pools (Raydium `AmmConfig→Pool` / Orca `WhirlpoolsConfig→Whirlpool`):
+
+```
+Config (singleton, [b"config"])            admin · pool_count · paused
+  └── Pool ([b"pool", config, staked_mint, reward_mint])   per-pair accounting
+        ├── staked_vault  [b"staked_vault", pool]     (authority = Pool PDA)
+        ├── reward_vault  [b"reward_vault", pool]      (authority = Pool PDA, prefunded)
+        ├── $STAKE mint   (Token-2022 TransferHook; mint authority = Pool PDA)
+        └── user_info     [b"user_info", pool, stake_token_account]
+```
+
+| Caller | Can call |
+|---|---|
+| **Admin** (`config.admin`) | `create_pool`, `set_emission`, `withdraw_surplus`, `set_pause`, `transfer_admin` |
+| **Anyone** | `fund_rewards` (in-only), `register` |
+| **User** (own accounts) | `stake`, `unstake`, `claim_rewards`, `close_user_info` |
+| **Token-2022** (CPI) | `transfer_hook` (settles rewards on every $STAKE transfer) |
+
+Pool address = `findPDA([b"pool", config, staked_mint, reward_mint])` — clients derive it
+statelessly; duplicates for a pair are impossible (PDA collision). Every user instruction
+binds all child accounts to the pool (`pool.config == config`, pool-scoped vault/mint/user_info)
+for cross-pool isolation.
 
 ## Live demo
 
@@ -120,13 +147,17 @@ After that, the new-user flow is fully self-serve:
 - **PDAs**: `Config [b"config"]` (state + emission params, authority of both vaults
   + $STAKE mint); `Vault [b"vault"]` ($BEEF); `RewardVault [b"reward_vault"]` ($MILK);
   `UserInfo [b"user", user]` (amount + reward_debt + pending_unclaimed).
-- **Tokens**: $STAKE = Token-2022 **NonTransferable** (program mints/burns);
-  $MILK = external token, program **only transfers from RewardVault** (never mints);
-  $BEEF = input. All transfers use `transfer_checked` (classic + Token-2022 via `token_interface`).
-- **Rewards O(1)**: global `acc_reward_per_share` + per-user `reward_debt`; no loops.
+- **Tokens**: $STAKE = Token-2022 **TransferHook** certificate (transferable; program
+  mints/burns); $MILK = external token, program **only transfers from RewardVault**
+  (never mints); $BEEF = input. All transfers use `transfer_checked` via `token_interface`.
+- **Rewards O(1)**: global `acc_reward_per_share` + per-account `reward_debt`; no loops.
   Strategy B: pending accrues into `pending_unclaimed`, paid only on claim.
-- **Principal authority = `UserInfo.amount` (checked_sub)**; $STAKE burn is the receipt
-  (equivalent under NonTransferable). No two-ledger desync possible.
+- **Principal authority = the $STAKE token-account BALANCE**; `UserInfo` (keyed by token
+  account, seeds `[b"user_info", stake_ata]`) holds only reward bookkeeping. Every
+  transfer CPIs the program's hook `execute`, which settles both sides — so balance and
+  `reward_debt` can never desync. **Register-before-receive**: a token account must call
+  `register` (creates its `UserInfo`) before it can receive a transfer; `stake`
+  auto-registers the staker via `init_if_needed`.
 - **Configurable emission**: `set_emission_params` re-anchors (`rate_anchor_time`) after
   settling; `end_time` bounds total liability → prefund `∫[start,end] r` = provable solvency.
 - **Safety**: PDA-only mint/vault authority, mint/owner/seeds/token-program constraints,
