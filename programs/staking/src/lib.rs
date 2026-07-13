@@ -47,7 +47,16 @@ pub mod staking {
         instructions::hook::init_extra_metas_handler(ctx)
     }
 
+    // 单独
+    pub fn fund_rewards(ctx: Context<FundRewards>, amount: u64) -> Result<()> {
+        instructions::fund::handler(ctx, amount)
+    }
+
     // ---- user ----
+
+    pub fn register(ctx: Context<Register>) -> Result<()> {
+        instructions::register::handler(ctx)
+    }
     pub fn stake(ctx: Context<Stake>, amount: u64) -> Result<()> {
         instructions::stake::handler(ctx, amount)
     }
@@ -56,12 +65,6 @@ pub mod staking {
     }
     pub fn claim_rewards(ctx: Context<ClaimRewards>) -> Result<()> {
         instructions::claim::handler(ctx)
-    }
-    pub fn fund_rewards(ctx: Context<FundRewards>, amount: u64) -> Result<()> {
-        instructions::fund::handler(ctx, amount)
-    }
-    pub fn register(ctx: Context<Register>) -> Result<()> {
-        instructions::register::handler(ctx)
     }
     pub fn close_user_info(ctx: Context<CloseUserInfo>) -> Result<()> {
         instructions::close_user::handler(ctx)
@@ -72,6 +75,7 @@ pub mod staking {
         instructions::hook::execute_handler(ctx, amount)
     }
 
+    // solo or no
     // ---- devnet-only faucet ----
     #[cfg(feature = "devnet-faucet")]
     pub fn faucet(ctx: Context<Faucet>, amount: u64) -> Result<()> {

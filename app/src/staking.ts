@@ -1,10 +1,11 @@
 import {
   AnchorProvider, BN, Program, type Idl, type Wallet,
 } from "@coral-xyz/anchor";
-import { Connection, PublicKey, SystemProgram } from "@solana/web3.js";
+import { Connection, PublicKey, SystemProgram, Transaction } from "@solana/web3.js";
 import {
   TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID,
   getAssociatedTokenAddressSync, createAssociatedTokenAccountInstruction, getAccount,
+  createTransferCheckedWithTransferHookInstruction,
 } from "@solana/spl-token";
 import { ACC_PRECISION, BEEF_MINT, STAKE_MINT, REWARD_MINT, DECIMALS } from "./config";
 
@@ -160,4 +161,37 @@ export async function doFaucet({ program, connection, owner }: Ctx, amount: BN) 
     user: owner, config, pool, stakedMint: stakedMint(), userStakedAta,
     stakedTokenProgram: CLASSIC_PROGRAM,
   }).preInstructions(ixs).rpc();
+}
+
+// Transfer $STAKE to another wallet. $STAKE is a Token-2022 TransferHook token, so the
+// transfer routes through our program's hook (settling both parties' rewards). The
+// recipient must have a UserInfo — we auto-create its ATA + `register` in the same tx
+// (register-before-receive), then send the hook-aware transfer.
+export async function doTransfer({ program, connection, owner }: Ctx, recipientStr: string, amount: BN) {
+  const recipient = new PublicKey(recipientStr.trim());
+  const { config, pool } = poolChildren(program.programId);
+  const mint = stakeReceiptMint();
+  const srcAta = getAssociatedTokenAddressSync(mint, owner, false, STAKE_PROGRAM);
+  const dstAta = getAssociatedTokenAddressSync(mint, recipient, false, STAKE_PROGRAM);
+
+  const ixs: any[] = [];
+  if (!(await connection.getAccountInfo(dstAta))) {
+    ixs.push(createAssociatedTokenAccountInstruction(owner, dstAta, recipient, mint, STAKE_PROGRAM));
+  }
+  const dstUserInfo = userInfoPda(program.programId, dstAta);
+  if (!(await connection.getAccountInfo(dstUserInfo))) {
+    const reg = await program.methods.register().accountsStrict({
+      payer: owner, config, pool, stakeReceiptMint: mint, stakeTokenAccount: dstAta,
+      userInfo: dstUserInfo, systemProgram: SystemProgram.programId,
+    }).instruction();
+    ixs.push(reg);
+  }
+  // Resolves pool + both UserInfo PDAs from the on-chain ExtraAccountMetaList.
+  const xfer = await createTransferCheckedWithTransferHookInstruction(
+    connection, srcAta, mint, dstAta, owner, BigInt(amount.toString()), DECIMALS, [], "confirmed", STAKE_PROGRAM,
+  );
+  ixs.push(xfer);
+
+  const tx = new Transaction().add(...ixs);
+  return (program.provider as AnchorProvider).sendAndConfirm!(tx);
 }

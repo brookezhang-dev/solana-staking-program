@@ -9,9 +9,6 @@
   "instructions": [
     {
       "name": "claim_rewards",
-      "docs": [
-        "Pay all pending_unclaimed from RewardVault (insufficient => fails)."
-      ],
       "discriminator": [
         4,
         144,
@@ -30,7 +27,6 @@
         },
         {
           "name": "config",
-          "writable": true,
           "pda": {
             "seeds": [
               {
@@ -48,6 +44,43 @@
           }
         },
         {
+          "name": "pool",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "config"
+              },
+              {
+                "kind": "account",
+                "path": "pool.staked_mint",
+                "account": "Pool"
+              },
+              {
+                "kind": "account",
+                "path": "pool.reward_mint",
+                "account": "Pool"
+              }
+            ]
+          }
+        },
+        {
+          "name": "stake_receipt_mint"
+        },
+        {
+          "name": "user_stake_ata"
+        },
+        {
           "name": "user_info",
           "writable": true,
           "pda": {
@@ -58,12 +91,21 @@
                   117,
                   115,
                   101,
-                  114
+                  114,
+                  95,
+                  105,
+                  110,
+                  102,
+                  111
                 ]
               },
               {
                 "kind": "account",
-                "path": "user"
+                "path": "pool"
+              },
+              {
+                "kind": "account",
+                "path": "user_stake_ata"
               }
             ]
           }
@@ -87,10 +129,278 @@
       "args": []
     },
     {
-      "name": "faucet",
-      "docs": [
-        "Devnet-only faucet (compiled under `devnet-faucet` feature)."
+      "name": "close_user_info",
+      "discriminator": [
+        138,
+        57,
+        176,
+        224,
+        176,
+        212,
+        39,
+        117
       ],
+      "accounts": [
+        {
+          "name": "owner",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "pool",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "config"
+              },
+              {
+                "kind": "account",
+                "path": "pool.staked_mint",
+                "account": "Pool"
+              },
+              {
+                "kind": "account",
+                "path": "pool.reward_mint",
+                "account": "Pool"
+              }
+            ]
+          }
+        },
+        {
+          "name": "stake_receipt_mint"
+        },
+        {
+          "name": "stake_token_account"
+        },
+        {
+          "name": "user_info",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  117,
+                  115,
+                  101,
+                  114,
+                  95,
+                  105,
+                  110,
+                  102,
+                  111
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pool"
+              },
+              {
+                "kind": "account",
+                "path": "stake_token_account"
+              }
+            ]
+          }
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "create_pool",
+      "discriminator": [
+        233,
+        146,
+        209,
+        142,
+        207,
+        104,
+        64,
+        188
+      ],
+      "accounts": [
+        {
+          "name": "admin",
+          "writable": true,
+          "signer": true,
+          "relations": [
+            "config"
+          ]
+        },
+        {
+          "name": "config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "staked_mint"
+        },
+        {
+          "name": "reward_mint"
+        },
+        {
+          "name": "stake_receipt_mint"
+        },
+        {
+          "name": "pool",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "config"
+              },
+              {
+                "kind": "account",
+                "path": "staked_mint"
+              },
+              {
+                "kind": "account",
+                "path": "reward_mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "staked_vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  115,
+                  116,
+                  97,
+                  107,
+                  101,
+                  100,
+                  95,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pool"
+              }
+            ]
+          }
+        },
+        {
+          "name": "reward_vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  119,
+                  97,
+                  114,
+                  100,
+                  95,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pool"
+              }
+            ]
+          }
+        },
+        {
+          "name": "staked_token_program"
+        },
+        {
+          "name": "reward_token_program"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "rent",
+          "address": "SysvarRent111111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "reward_per_sec",
+          "type": "u64"
+        },
+        {
+          "name": "start_time",
+          "type": "i64"
+        },
+        {
+          "name": "end_time",
+          "type": "i64"
+        }
+      ]
+    },
+    {
+      "name": "faucet",
       "discriminator": [
         0,
         98,
@@ -126,15 +436,45 @@
           }
         },
         {
-          "name": "beef_mint",
+          "name": "pool",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "config"
+              },
+              {
+                "kind": "account",
+                "path": "pool.staked_mint",
+                "account": "Pool"
+              },
+              {
+                "kind": "account",
+                "path": "pool.reward_mint",
+                "account": "Pool"
+              }
+            ]
+          }
+        },
+        {
+          "name": "staked_mint",
           "writable": true
         },
         {
-          "name": "user_beef_ata",
+          "name": "user_staked_ata",
           "writable": true
         },
         {
-          "name": "beef_token_program"
+          "name": "staked_token_program"
         }
       ],
       "args": [
@@ -146,9 +486,6 @@
     },
     {
       "name": "fund_rewards",
-      "docs": [
-        "Top up the RewardVault (anyone, in-only)."
-      ],
       "discriminator": [
         114,
         64,
@@ -184,6 +521,36 @@
           }
         },
         {
+          "name": "pool",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "config"
+              },
+              {
+                "kind": "account",
+                "path": "pool.staked_mint",
+                "account": "Pool"
+              },
+              {
+                "kind": "account",
+                "path": "pool.reward_mint",
+                "account": "Pool"
+              }
+            ]
+          }
+        },
+        {
           "name": "reward_mint",
           "writable": true
         },
@@ -207,20 +574,16 @@
       ]
     },
     {
-      "name": "initialize",
-      "docs": [
-        "Create Config + Vault + RewardVault; validate $STAKE (NonTransferable,",
-        "authority = Config PDA) and reject transfer-hook beef/reward; store params."
-      ],
+      "name": "initialize_config",
       "discriminator": [
-        175,
-        175,
-        109,
-        31,
-        13,
-        152,
-        155,
-        237
+        208,
+        127,
+        21,
+        1,
+        194,
+        190,
+        196,
+        70
       ],
       "accounts": [
         {
@@ -248,88 +611,263 @@
           }
         },
         {
-          "name": "beef_mint"
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "initialize_extra_account_meta_list",
+      "discriminator": [
+        92,
+        197,
+        174,
+        197,
+        41,
+        124,
+        19,
+        3
+      ],
+      "accounts": [
+        {
+          "name": "payer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "extra_account_meta_list",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  101,
+                  120,
+                  116,
+                  114,
+                  97,
+                  45,
+                  97,
+                  99,
+                  99,
+                  111,
+                  117,
+                  110,
+                  116,
+                  45,
+                  109,
+                  101,
+                  116,
+                  97,
+                  115
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "stake_mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "pool"
         },
         {
           "name": "stake_mint"
         },
         {
-          "name": "reward_mint"
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "register",
+      "discriminator": [
+        211,
+        124,
+        67,
+        15,
+        211,
+        194,
+        178,
+        240
+      ],
+      "accounts": [
+        {
+          "name": "payer",
+          "writable": true,
+          "signer": true
         },
         {
-          "name": "vault",
-          "writable": true,
+          "name": "config",
           "pda": {
             "seeds": [
               {
                 "kind": "const",
                 "value": [
-                  118,
-                  97,
-                  117,
-                  108,
-                  116
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
                 ]
               }
             ]
           }
         },
         {
-          "name": "reward_vault",
+          "name": "pool",
           "writable": true,
           "pda": {
             "seeds": [
               {
                 "kind": "const",
                 "value": [
-                  114,
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "config"
+              },
+              {
+                "kind": "account",
+                "path": "pool.staked_mint",
+                "account": "Pool"
+              },
+              {
+                "kind": "account",
+                "path": "pool.reward_mint",
+                "account": "Pool"
+              }
+            ]
+          }
+        },
+        {
+          "name": "stake_receipt_mint"
+        },
+        {
+          "name": "stake_token_account"
+        },
+        {
+          "name": "user_info",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  117,
+                  115,
                   101,
-                  119,
-                  97,
                   114,
-                  100,
                   95,
-                  118,
-                  97,
-                  117,
-                  108,
-                  116
+                  105,
+                  110,
+                  102,
+                  111
                 ]
+              },
+              {
+                "kind": "account",
+                "path": "pool"
+              },
+              {
+                "kind": "account",
+                "path": "stake_token_account"
               }
             ]
           }
-        },
-        {
-          "name": "beef_token_program"
-        },
-        {
-          "name": "reward_token_program"
         },
         {
           "name": "system_program",
           "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "set_emission",
+      "discriminator": [
+        193,
+        29,
+        80,
+        212,
+        241,
+        35,
+        97,
+        23
+      ],
+      "accounts": [
+        {
+          "name": "admin",
+          "signer": true,
+          "relations": [
+            "config"
+          ]
         },
         {
-          "name": "rent",
-          "address": "SysvarRent111111111111111111111111111111111"
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "pool",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "config"
+              },
+              {
+                "kind": "account",
+                "path": "pool.staked_mint",
+                "account": "Pool"
+              },
+              {
+                "kind": "account",
+                "path": "pool.reward_mint",
+                "account": "Pool"
+              }
+            ]
+          }
         }
       ],
       "args": [
         {
-          "name": "initial_rate",
+          "name": "reward_per_sec",
           "type": "u64"
-        },
-        {
-          "name": "decay_per_sec",
-          "type": "u64"
-        },
-        {
-          "name": "min_rate",
-          "type": "u64"
-        },
-        {
-          "name": "start_time",
-          "type": "i64"
         },
         {
           "name": "end_time",
@@ -338,19 +876,16 @@
       ]
     },
     {
-      "name": "set_emission_params",
-      "docs": [
-        "Admin: update emission params with re-anchoring (settle → write → re-anchor)."
-      ],
+      "name": "set_pause",
       "discriminator": [
-        189,
-        17,
-        68,
-        225,
-        214,
-        210,
-        172,
-        194
+        63,
+        32,
+        154,
+        2,
+        56,
+        103,
+        79,
+        45
       ],
       "accounts": [
         {
@@ -382,28 +917,13 @@
       ],
       "args": [
         {
-          "name": "initial_rate",
-          "type": "u64"
-        },
-        {
-          "name": "decay_per_sec",
-          "type": "u64"
-        },
-        {
-          "name": "min_rate",
-          "type": "u64"
-        },
-        {
-          "name": "end_time",
-          "type": "i64"
+          "name": "paused",
+          "type": "bool"
         }
       ]
     },
     {
       "name": "stake",
-      "docs": [
-        "Deposit $BEEF (balance-diff), mint equal $STAKE, settle pending (strategy B)."
-      ],
       "discriminator": [
         206,
         176,
@@ -422,7 +942,6 @@
         },
         {
           "name": "config",
-          "writable": true,
           "pda": {
             "seeds": [
               {
@@ -440,6 +959,57 @@
           }
         },
         {
+          "name": "pool",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "config"
+              },
+              {
+                "kind": "account",
+                "path": "pool.staked_mint",
+                "account": "Pool"
+              },
+              {
+                "kind": "account",
+                "path": "pool.reward_mint",
+                "account": "Pool"
+              }
+            ]
+          }
+        },
+        {
+          "name": "staked_mint",
+          "writable": true
+        },
+        {
+          "name": "stake_receipt_mint",
+          "writable": true
+        },
+        {
+          "name": "user_staked_ata",
+          "writable": true
+        },
+        {
+          "name": "staked_vault",
+          "writable": true
+        },
+        {
+          "name": "user_stake_ata",
+          "writable": true
+        },
+        {
           "name": "user_info",
           "writable": true,
           "pda": {
@@ -450,38 +1020,27 @@
                   117,
                   115,
                   101,
-                  114
+                  114,
+                  95,
+                  105,
+                  110,
+                  102,
+                  111
                 ]
               },
               {
                 "kind": "account",
-                "path": "user"
+                "path": "pool"
+              },
+              {
+                "kind": "account",
+                "path": "user_stake_ata"
               }
             ]
           }
         },
         {
-          "name": "beef_mint",
-          "writable": true
-        },
-        {
-          "name": "stake_mint",
-          "writable": true
-        },
-        {
-          "name": "user_beef_ata",
-          "writable": true
-        },
-        {
-          "name": "vault",
-          "writable": true
-        },
-        {
-          "name": "user_stake_ata",
-          "writable": true
-        },
-        {
-          "name": "beef_token_program"
+          "name": "staked_token_program"
         },
         {
           "name": "stake_token_program"
@@ -499,25 +1058,24 @@
       ]
     },
     {
-      "name": "unstake",
-      "docs": [
-        "Burn $STAKE, refund $BEEF from Vault, settle pending (strategy B)."
-      ],
+      "name": "transfer_admin",
       "discriminator": [
-        90,
-        95,
-        107,
         42,
-        205,
-        124,
-        50,
-        225
+        242,
+        66,
+        106,
+        228,
+        10,
+        111,
+        156
       ],
       "accounts": [
         {
-          "name": "user",
-          "writable": true,
-          "signer": true
+          "name": "admin",
+          "signer": true,
+          "relations": [
+            "config"
+          ]
         },
         {
           "name": "config",
@@ -537,6 +1095,233 @@
               }
             ]
           }
+        }
+      ],
+      "args": [
+        {
+          "name": "new_admin",
+          "type": "pubkey"
+        }
+      ]
+    },
+    {
+      "name": "transfer_hook",
+      "discriminator": [
+        220,
+        57,
+        220,
+        152,
+        126,
+        125,
+        97,
+        168
+      ],
+      "accounts": [
+        {
+          "name": "source_token"
+        },
+        {
+          "name": "mint"
+        },
+        {
+          "name": "destination_token"
+        },
+        {
+          "name": "owner"
+        },
+        {
+          "name": "extra_account_meta_list",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  101,
+                  120,
+                  116,
+                  114,
+                  97,
+                  45,
+                  97,
+                  99,
+                  99,
+                  111,
+                  117,
+                  110,
+                  116,
+                  45,
+                  109,
+                  101,
+                  116,
+                  97,
+                  115
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "pool",
+          "writable": true
+        },
+        {
+          "name": "source_user_info",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  117,
+                  115,
+                  101,
+                  114,
+                  95,
+                  105,
+                  110,
+                  102,
+                  111
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pool"
+              },
+              {
+                "kind": "account",
+                "path": "source_token"
+              }
+            ]
+          }
+        },
+        {
+          "name": "destination_user_info",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  117,
+                  115,
+                  101,
+                  114,
+                  95,
+                  105,
+                  110,
+                  102,
+                  111
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pool"
+              },
+              {
+                "kind": "account",
+                "path": "destination_token"
+              }
+            ]
+          }
+        }
+      ],
+      "args": [
+        {
+          "name": "amount",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "unstake",
+      "discriminator": [
+        90,
+        95,
+        107,
+        42,
+        205,
+        124,
+        50,
+        225
+      ],
+      "accounts": [
+        {
+          "name": "user",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "pool",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "config"
+              },
+              {
+                "kind": "account",
+                "path": "pool.staked_mint",
+                "account": "Pool"
+              },
+              {
+                "kind": "account",
+                "path": "pool.reward_mint",
+                "account": "Pool"
+              }
+            ]
+          }
+        },
+        {
+          "name": "staked_mint",
+          "writable": true
+        },
+        {
+          "name": "stake_receipt_mint",
+          "writable": true
+        },
+        {
+          "name": "user_staked_ata",
+          "writable": true
+        },
+        {
+          "name": "staked_vault",
+          "writable": true
+        },
+        {
+          "name": "user_stake_ata",
+          "writable": true
         },
         {
           "name": "user_info",
@@ -549,41 +1334,122 @@
                   117,
                   115,
                   101,
-                  114
+                  114,
+                  95,
+                  105,
+                  110,
+                  102,
+                  111
                 ]
               },
               {
                 "kind": "account",
-                "path": "user"
+                "path": "pool"
+              },
+              {
+                "kind": "account",
+                "path": "user_stake_ata"
               }
             ]
           }
         },
         {
-          "name": "beef_mint",
-          "writable": true
-        },
-        {
-          "name": "stake_mint",
-          "writable": true
-        },
-        {
-          "name": "user_beef_ata",
-          "writable": true
-        },
-        {
-          "name": "vault",
-          "writable": true
-        },
-        {
-          "name": "user_stake_ata",
-          "writable": true
-        },
-        {
-          "name": "beef_token_program"
+          "name": "staked_token_program"
         },
         {
           "name": "stake_token_program"
+        }
+      ],
+      "args": [
+        {
+          "name": "amount",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "withdraw_surplus",
+      "discriminator": [
+        150,
+        183,
+        243,
+        31,
+        213,
+        21,
+        79,
+        26
+      ],
+      "accounts": [
+        {
+          "name": "admin",
+          "signer": true,
+          "relations": [
+            "config"
+          ]
+        },
+        {
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "pool",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "config"
+              },
+              {
+                "kind": "account",
+                "path": "pool.staked_mint",
+                "account": "Pool"
+              },
+              {
+                "kind": "account",
+                "path": "pool.reward_mint",
+                "account": "Pool"
+              }
+            ]
+          }
+        },
+        {
+          "name": "reward_mint",
+          "writable": true
+        },
+        {
+          "name": "reward_vault",
+          "writable": true
+        },
+        {
+          "name": "destination",
+          "writable": true
+        },
+        {
+          "name": "reward_token_program"
         }
       ],
       "args": [
@@ -609,6 +1475,19 @@
       ]
     },
     {
+      "name": "Pool",
+      "discriminator": [
+        241,
+        154,
+        109,
+        4,
+        17,
+        177,
+        109,
+        188
+      ]
+    },
+    {
       "name": "UserInfo",
       "discriminator": [
         83,
@@ -624,6 +1503,19 @@
   ],
   "events": [
     {
+      "name": "AdminTransferred",
+      "discriminator": [
+        255,
+        147,
+        182,
+        5,
+        199,
+        217,
+        38,
+        179
+      ]
+    },
+    {
       "name": "ClaimEvent",
       "discriminator": [
         93,
@@ -637,16 +1529,16 @@
       ]
     },
     {
-      "name": "EmissionParamsUpdatedEvent",
+      "name": "EmissionSet",
       "discriminator": [
-        206,
-        67,
-        134,
-        97,
-        59,
-        123,
-        188,
-        81
+        178,
+        122,
+        30,
+        106,
+        195,
+        27,
+        77,
+        224
       ]
     },
     {
@@ -663,6 +1555,32 @@
       ]
     },
     {
+      "name": "PauseSet",
+      "discriminator": [
+        175,
+        57,
+        198,
+        136,
+        192,
+        66,
+        204,
+        73
+      ]
+    },
+    {
+      "name": "PoolCreated",
+      "discriminator": [
+        202,
+        44,
+        41,
+        88,
+        104,
+        220,
+        157,
+        82
+      ]
+    },
+    {
       "name": "StakeEvent",
       "discriminator": [
         226,
@@ -676,6 +1594,19 @@
       ]
     },
     {
+      "name": "SurplusWithdrawn",
+      "discriminator": [
+        29,
+        6,
+        61,
+        94,
+        79,
+        60,
+        172,
+        245
+      ]
+    },
+    {
       "name": "UnstakeEvent",
       "discriminator": [
         162,
@@ -686,6 +1617,19 @@
         3,
         79,
         197
+      ]
+    },
+    {
+      "name": "UserInfoClosed",
+      "discriminator": [
+        120,
+        55,
+        247,
+        31,
+        214,
+        176,
+        45,
+        140
       ]
     }
   ],
@@ -722,51 +1666,86 @@
     },
     {
       "code": 6006,
-      "name": "NotInitialized",
-      "msg": "pool not initialized"
-    },
-    {
-      "code": 6007,
       "name": "FaucetTooMuch",
       "msg": "faucet amount exceeds the per-call cap"
     },
     {
-      "code": 6008,
+      "code": 6007,
       "name": "RewardVaultInsufficient",
       "msg": "reward vault balance insufficient to pay pending"
     },
     {
+      "code": 6008,
+      "name": "StakeMintHookMismatch",
+      "msg": "stake mint must carry a TransferHook extension pointing at this program"
+    },
+    {
       "code": 6009,
-      "name": "InvalidEmissionParams",
-      "msg": "emission params invalid: require min_rate <= initial_rate"
+      "name": "UnsupportedTokenExtension",
+      "msg": "token has an unsupported extension (transfer hook on staked/reward)"
     },
     {
       "code": 6010,
-      "name": "InvalidEndTime",
-      "msg": "end_time invalid: must be 0 or > now and > start_time"
+      "name": "InvalidTimeRange",
+      "msg": "invalid time range: end_time must be 0 or > now and > start_time"
     },
     {
       "code": 6011,
-      "name": "StakeMintNotNonTransferable",
-      "msg": "stake mint must be a Token-2022 NonTransferable mint"
+      "name": "NotTransferring",
+      "msg": "hook execute must be invoked by Token-2022 during a transfer"
     },
     {
       "code": 6012,
-      "name": "UnsupportedTokenExtension",
-      "msg": "token has an unsupported extension (transfer fee / transfer hook)"
+      "name": "DestinationNotRegistered",
+      "msg": "destination $STAKE account has no UserInfo — call register first"
     },
     {
       "code": 6013,
-      "name": "ZeroCredited",
-      "msg": "credited amount is zero after transfer (all consumed by fee?)"
+      "name": "Paused",
+      "msg": "protocol is paused"
+    },
+    {
+      "code": 6014,
+      "name": "NothingToWithdraw",
+      "msg": "nothing to withdraw: amount exceeds surplus"
+    },
+    {
+      "code": 6015,
+      "name": "AccountNotEmpty",
+      "msg": "user_info not empty: require balance == 0 && pending_unclaimed == 0"
+    },
+    {
+      "code": 6016,
+      "name": "PoolConfigMismatch",
+      "msg": "pool config mismatch"
     }
   ],
   "types": [
+    {
+      "name": "AdminTransferred",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "old_admin",
+            "type": "pubkey"
+          },
+          {
+            "name": "new_admin",
+            "type": "pubkey"
+          }
+        ]
+      }
+    },
     {
       "name": "ClaimEvent",
       "type": {
         "kind": "struct",
         "fields": [
+          {
+            "name": "pool",
+            "type": "pubkey"
+          },
           {
             "name": "user",
             "type": "pubkey"
@@ -781,9 +1760,8 @@
     {
       "name": "Config",
       "docs": [
-        "Global config + reward-pool state. PDA: seeds = [CONFIG_SEED].",
-        "Also acts as authority of both vaults AND the $STAKE mint authority.",
-        "$MILK/reward mint authority is NOT held by the program (prefunded-vault model)."
+        "Tier 1 — protocol singleton. PDA: seeds = [CONFIG_SEED].",
+        "Holds ONLY protocol-level state; all pool accounting lives in `Pool`."
       ],
       "type": {
         "kind": "struct",
@@ -793,75 +1771,15 @@
             "type": "pubkey"
           },
           {
-            "name": "beef_mint",
-            "type": "pubkey"
+            "name": "pool_count",
+            "type": "u16"
           },
           {
-            "name": "stake_mint",
-            "type": "pubkey"
-          },
-          {
-            "name": "reward_mint",
-            "type": "pubkey"
-          },
-          {
-            "name": "vault",
-            "type": "pubkey"
-          },
-          {
-            "name": "reward_vault",
-            "type": "pubkey"
-          },
-          {
-            "name": "total_staked",
-            "type": "u64"
-          },
-          {
-            "name": "acc_reward_per_share",
-            "type": "u128"
-          },
-          {
-            "name": "last_reward_time",
-            "type": "i64"
-          },
-          {
-            "name": "start_time",
-            "type": "i64"
-          },
-          {
-            "name": "rate_anchor_time",
-            "type": "i64"
-          },
-          {
-            "name": "end_time",
-            "type": "i64"
-          },
-          {
-            "name": "initial_rate",
-            "type": "u64"
-          },
-          {
-            "name": "decay_per_sec",
-            "type": "u64"
-          },
-          {
-            "name": "min_rate",
-            "type": "u64"
-          },
-          {
-            "name": "total_claimed",
-            "type": "u64"
+            "name": "paused",
+            "type": "bool"
           },
           {
             "name": "bump",
-            "type": "u8"
-          },
-          {
-            "name": "vault_bump",
-            "type": "u8"
-          },
-          {
-            "name": "reward_vault_bump",
             "type": "u8"
           },
           {
@@ -877,35 +1795,20 @@
       }
     },
     {
-      "name": "EmissionParamsUpdatedEvent",
-      "docs": [
-        "Emitted by set_emission_params — records the re-anchoring."
-      ],
+      "name": "EmissionSet",
       "type": {
         "kind": "struct",
         "fields": [
           {
-            "name": "admin",
+            "name": "pool",
             "type": "pubkey"
           },
           {
-            "name": "initial_rate",
-            "type": "u64"
-          },
-          {
-            "name": "decay_per_sec",
-            "type": "u64"
-          },
-          {
-            "name": "min_rate",
+            "name": "reward_per_sec",
             "type": "u64"
           },
           {
             "name": "end_time",
-            "type": "i64"
-          },
-          {
-            "name": "rate_anchor_time",
             "type": "i64"
           }
         ]
@@ -913,12 +1816,13 @@
     },
     {
       "name": "FundEvent",
-      "docs": [
-        "Emitted by fund_rewards — water-level bot tracks solvency from this + ClaimEvent."
-      ],
       "type": {
         "kind": "struct",
         "fields": [
+          {
+            "name": "pool",
+            "type": "pubkey"
+          },
           {
             "name": "funder",
             "type": "pubkey"
@@ -935,10 +1839,148 @@
       }
     },
     {
+      "name": "PauseSet",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "admin",
+            "type": "pubkey"
+          },
+          {
+            "name": "paused",
+            "type": "bool"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Pool",
+      "docs": [
+        "Tier 2 — one per (staked_mint, reward_mint) pair.",
+        "PDA: seeds = [POOL_SEED, config, staked_mint, reward_mint]. The Pool PDA is the",
+        "authority of its two vaults AND the $STAKE receipt mint (per-pool dual role)."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "config",
+            "type": "pubkey"
+          },
+          {
+            "name": "staked_mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "reward_mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "stake_receipt_mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "staked_vault",
+            "type": "pubkey"
+          },
+          {
+            "name": "reward_vault",
+            "type": "pubkey"
+          },
+          {
+            "name": "acc_reward_per_share",
+            "type": "u128"
+          },
+          {
+            "name": "last_reward_time",
+            "type": "i64"
+          },
+          {
+            "name": "start_time",
+            "type": "i64"
+          },
+          {
+            "name": "end_time",
+            "type": "i64"
+          },
+          {
+            "name": "reward_per_sec",
+            "type": "u64"
+          },
+          {
+            "name": "total_emitted",
+            "type": "u128"
+          },
+          {
+            "name": "total_staked",
+            "type": "u64"
+          },
+          {
+            "name": "total_claimed",
+            "type": "u64"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          },
+          {
+            "name": "reserved",
+            "type": {
+              "array": [
+                "u8",
+                64
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "PoolCreated",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "pool",
+            "type": "pubkey"
+          },
+          {
+            "name": "staked_mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "reward_mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "stake_receipt_mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "reward_per_sec",
+            "type": "u64"
+          },
+          {
+            "name": "start_time",
+            "type": "i64"
+          },
+          {
+            "name": "end_time",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
       "name": "StakeEvent",
       "type": {
         "kind": "struct",
         "fields": [
+          {
+            "name": "pool",
+            "type": "pubkey"
+          },
           {
             "name": "user",
             "type": "pubkey"
@@ -955,10 +1997,38 @@
       }
     },
     {
+      "name": "SurplusWithdrawn",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "pool",
+            "type": "pubkey"
+          },
+          {
+            "name": "admin",
+            "type": "pubkey"
+          },
+          {
+            "name": "amount",
+            "type": "u64"
+          },
+          {
+            "name": "reward_vault_balance",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
       "name": "UnstakeEvent",
       "type": {
         "kind": "struct",
         "fields": [
+          {
+            "name": "pool",
+            "type": "pubkey"
+          },
           {
             "name": "user",
             "type": "pubkey"
@@ -977,20 +2047,16 @@
     {
       "name": "UserInfo",
       "docs": [
-        "Per-user state. PDA: seeds = [USER_SEED, user_pubkey].",
-        "`amount` is the SOLE principal ledger (redeem limit AND reward share both use it).",
-        "With NonTransferable $STAKE, `amount ≡ 用户 $STAKE 余额` holds physically."
+        "Per-$STAKE-token-account reward state. PDA: seeds = [USER_SEED, pool, token_account].",
+        "The token-account BALANCE is the share authority; this struct holds only MasterChef",
+        "bookkeeping. Keyed by token account so the transfer hook can settle both parties."
       ],
       "type": {
         "kind": "struct",
         "fields": [
           {
-            "name": "owner",
+            "name": "token_account",
             "type": "pubkey"
-          },
-          {
-            "name": "amount",
-            "type": "u64"
           },
           {
             "name": "reward_debt",
@@ -1009,9 +2075,25 @@
             "type": {
               "array": [
                 "u8",
-                16
+                32
               ]
             }
+          }
+        ]
+      }
+    },
+    {
+      "name": "UserInfoClosed",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "pool",
+            "type": "pubkey"
+          },
+          {
+            "name": "user",
+            "type": "pubkey"
           }
         ]
       }

@@ -98,7 +98,7 @@ pub fn handler(
     pool.end_time = end_time;
     pool.reward_per_sec = reward_per_sec;
     pool.total_emitted = 0;
-    pool.total_staked = 0;
+    pool.total_staked = 0;  // todo: mint amount 
     pool.total_claimed = 0;
     pool.bump = ctx.bumps.pool;
     pool.reserved = [0u8; 64];

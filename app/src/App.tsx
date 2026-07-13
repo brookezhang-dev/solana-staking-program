@@ -13,6 +13,7 @@ import {
   doClaim,
   doFaucet,
   doStake,
+  doTransfer,
   doUnstake,
   estimatePending,
   fromBase,
@@ -45,6 +46,7 @@ export default function App() {
   const [status, setStatus] = useState<{ msg: string; sig?: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [paused, setPaused] = useState(false);
+  const [recipient, setRecipient] = useState("");
 
   const programReady = useMemo(() => configured && !!wallet, [wallet]);
 
@@ -146,6 +148,27 @@ export default function App() {
             >
               {bal && bal.beef === 0n ? "余额为 0 — 领取 1000 测试 $BEEF" : "领取 1000 测试 $BEEF"}
             </button>
+          </div>
+
+          <div className="card">
+            <label className="muted">Transfer $STAKE — recipient wallet</label>
+            <input
+              value={recipient}
+              onChange={(e) => setRecipient(e.target.value)}
+              placeholder="接收方钱包地址(收款方会自动 register)"
+            />
+            <button
+              className="act"
+              disabled={busy || !programReady || !recipient.trim()}
+              onClick={() =>
+                run("Transfer $STAKE", (ctx: any) => doTransfer(ctx, recipient, toBase(amount)), false)
+              }
+            >
+              Transfer {amount || "0"} $STAKE(经 Hook 结算双方奖励)
+            </button>
+            <div className="muted" style={{ fontSize: 12, marginTop: 6 }}>
+              $STAKE 是 Token-2022 TransferHook 代币,转账会经程序 hook 原子结算双方奖励。
+            </div>
           </div>
         </>
       )}
