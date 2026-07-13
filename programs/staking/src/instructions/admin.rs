@@ -1,12 +1,13 @@
 //! Admin instructions (v3.x, all gated on Config.admin):
 //!   set_pause        — global emergency stop (Config.paused)
-//!   transfer_admin   — single-step admin handover
+//!   transfer_admin   — step 1/2: propose a new admin (does NOT take effect yet)
+//!   accept_admin     — step 2/2: pending_admin signs to claim the role
 //!   set_emission     — per-pool rate change (settle at OLD rate first)
 //!   withdraw_surplus — per-pool: withdraw only balance above outstanding liability
 
 use crate::constants::*;
 use crate::errors::StakingError;
-use crate::events::{AdminTransferred, EmissionSet, PauseSet, SurplusWithdrawn};
+use crate::events::{AdminTransferProposed, AdminTransferred, EmissionSet, PauseSet, SurplusWithdrawn};
 use crate::instructions::reward;
 use crate::state::{Config, Pool};
 use anchor_lang::prelude::*;
@@ -34,9 +35,34 @@ pub fn set_pause_handler(ctx: Context<AdminConfig>, paused: bool) -> Result<()> 
     Ok(())
 }
 
+/// Step 1/2: only records intent. The current admin keeps full control until
+/// `accept_admin` is signed by `new_admin` — protects against a mistyped pubkey
+/// permanently locking the protocol out of its own admin.
 pub fn transfer_admin_handler(ctx: Context<AdminConfig>, new_admin: Pubkey) -> Result<()> {
+    ctx.accounts.config.pending_admin = new_admin;
+    emit!(AdminTransferProposed { admin: ctx.accounts.admin.key(), pending_admin: new_admin });
+    Ok(())
+}
+
+#[derive(Accounts)]
+pub struct AcceptAdmin<'info> {
+    pub pending_admin: Signer<'info>,
+    #[account(
+        mut,
+        seeds = [CONFIG_SEED],
+        bump = config.bump,
+        constraint = config.pending_admin == pending_admin.key() @ StakingError::Unauthorized,
+    )]
+    pub config: Account<'info, Config>,
+}
+
+/// Step 2/2: `pending_admin` claims the role. Resets `pending_admin` so it
+/// cannot be replayed.
+pub fn accept_admin_handler(ctx: Context<AcceptAdmin>) -> Result<()> {
     let old = ctx.accounts.config.admin;
+    let new_admin = ctx.accounts.pending_admin.key();
     ctx.accounts.config.admin = new_admin;
+    ctx.accounts.config.pending_admin = Pubkey::default();
     emit!(AdminTransferred { old_admin: old, new_admin });
     Ok(())
 }

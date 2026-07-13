@@ -47,7 +47,7 @@ pub struct ClaimRewards<'info> {
     pub reward_token_program: Interface<'info, TokenInterface>,
 }
 
-pub fn handler(ctx: Context<ClaimRewards>) -> Result<()> {
+pub fn claim_handler(ctx: Context<ClaimRewards>) -> Result<()> {
     require!(!ctx.accounts.config.paused, StakingError::Paused);
     let now = Clock::get()?.unix_timestamp;
     reward::update_pool(&mut ctx.accounts.pool, now)?;

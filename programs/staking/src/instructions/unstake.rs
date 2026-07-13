@@ -49,7 +49,7 @@ pub struct Unstake<'info> {
     pub stake_token_program: Interface<'info, TokenInterface>,
 }
 
-pub fn handler(ctx: Context<Unstake>, amount: u64) -> Result<()> {
+pub fn unstake_handler(ctx: Context<Unstake>, amount: u64) -> Result<()> {
     require!(amount > 0, StakingError::AmountZero);
     let now = Clock::get()?.unix_timestamp;
 

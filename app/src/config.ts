@@ -1,7 +1,7 @@
-// v3 devnet mints (from scripts/setup-devnet.ts output).
-export const BEEF_MINT = "G6wz3Bm1hRFg8PGiZzrQAZgh3C7iPReS2xb11PsktYfF";
-export const STAKE_MINT = "7cD7PsZJT8aoUyiKHtM9RtD7P1RtFHDwWs8ktmhkH6Gp"; // Token-2022 NonTransferable
-export const REWARD_MINT = "3dK1AfnsXFnp52HpC3vmrb7bvxRH2GEimtE34cGp7tgG";
+// v3.x devnet mints (from scripts/setup-devnet.ts output, Config/Pool two-tier).
+export const BEEF_MINT = "6wtE2ms7wbXPcpWvrauyismUZeSRWBYNWej7ABo1YwRW";
+export const STAKE_MINT = "CkJryaVo6jMcsNobK98zYXCCC18Pftg3UrJGSQAPTbFX"; // Token-2022 TransferHook (transferable)
+export const REWARD_MINT = "Bydv95RTYz5aVQbRjY9DksNL7JNTWTqQCUPgEmZtSnm3";
 
 export const CLUSTER = "devnet";
 export const DECIMALS = 9;

@@ -7,15 +7,17 @@ use anchor_lang::prelude::*;
 /// Holds ONLY protocol-level state; all pool accounting lives in `Pool`.
 #[account]
 pub struct Config {
-    pub admin: Pubkey,       // 32  protocol admin (create_pool / set_pause / set_emission / transfer_admin)
-    pub pool_count: u16,     //  2  bookkeeping only (pool identity is the mint pair)
-    pub paused: bool,        //  1  global emergency stop; every user ix checks it
-    pub bump: u8,            //  1
-    pub reserved: [u8; 64],  // 64
+    pub admin: Pubkey,         // 32  protocol admin (create_pool / set_pause / set_emission)
+    pub pending_admin: Pubkey, // 32  set by transfer_admin, must accept_admin to take effect;
+                               //     Pubkey::default() means no transfer in progress
+    pub pool_count: u16,       //  2  bookkeeping only (pool identity is the mint pair)
+    pub paused: bool,          //  1  global emergency stop; every user ix checks it
+    pub bump: u8,              //  1
+    pub reserved: [u8; 32],    // 32
 }
 
 impl Config {
-    // 32 + 2 + 1 + 1 + 64 = 100 ; account = 8 + 100 = 108
+    // 32 + 32 + 2 + 1 + 1 + 32 = 100 ; account = 8 + 100 = 108
     pub const SPACE: usize = 100;
 }
 

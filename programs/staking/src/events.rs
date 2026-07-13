@@ -72,6 +72,12 @@ pub struct PauseSet {
 }
 
 #[event]
+pub struct AdminTransferProposed {
+    pub admin: Pubkey,
+    pub pending_admin: Pubkey,
+}
+
+#[event]
 pub struct AdminTransferred {
     pub old_admin: Pubkey,
     pub new_admin: Pubkey,

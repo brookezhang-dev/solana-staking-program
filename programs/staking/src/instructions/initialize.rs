@@ -22,12 +22,13 @@ pub struct InitializeConfig<'info> {
     pub system_program: Program<'info, System>,
 }
 
-pub fn handler(ctx: Context<InitializeConfig>) -> Result<()> {
+pub fn initialize_config_handler(ctx: Context<InitializeConfig>) -> Result<()> {
     let c = &mut ctx.accounts.config;
     c.admin = ctx.accounts.admin.key();
+    c.pending_admin = Pubkey::default();
     c.pool_count = 0;
     c.paused = false;
     c.bump = ctx.bumps.config;
-    c.reserved = [0u8; 64];
+    c.reserved = [0u8; 32];
     Ok(())
 }

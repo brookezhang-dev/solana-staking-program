@@ -32,7 +32,7 @@ pub struct FundRewards<'info> {
     pub reward_token_program: Interface<'info, TokenInterface>,
 }
 
-pub fn handler(ctx: Context<FundRewards>, amount: u64) -> Result<()> {
+pub fn fund_rewards_handler(ctx: Context<FundRewards>, amount: u64) -> Result<()> {
     require!(amount > 0, StakingError::AmountZero);
     let before = ctx.accounts.reward_vault.amount;
     token_interface::transfer_checked(

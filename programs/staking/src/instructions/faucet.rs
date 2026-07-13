@@ -31,7 +31,7 @@ pub struct Faucet<'info> {
     pub staked_token_program: Interface<'info, TokenInterface>,
 }
 
-pub fn handler(ctx: Context<Faucet>, amount: u64) -> Result<()> {
+pub fn faucet_handler(ctx: Context<Faucet>, amount: u64) -> Result<()> {
     require!(amount > 0, StakingError::AmountZero);
     require!(amount <= FAUCET_MAX, StakingError::FaucetTooMuch);
 

@@ -8,6 +8,45 @@
   },
   "instructions": [
     {
+      "name": "accept_admin",
+      "discriminator": [
+        112,
+        42,
+        45,
+        90,
+        116,
+        181,
+        13,
+        170
+      ],
+      "accounts": [
+        {
+          "name": "pending_admin",
+          "signer": true
+        },
+        {
+          "name": "config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "args": []
+    },
+    {
       "name": "claim_rewards",
       "discriminator": [
         4,
@@ -1503,6 +1542,19 @@
   ],
   "events": [
     {
+      "name": "AdminTransferProposed",
+      "discriminator": [
+        203,
+        168,
+        175,
+        51,
+        239,
+        104,
+        20,
+        85
+      ]
+    },
+    {
       "name": "AdminTransferred",
       "discriminator": [
         255,
@@ -1696,31 +1748,42 @@
     },
     {
       "code": 6012,
-      "name": "DestinationNotRegistered",
-      "msg": "destination $STAKE account has no UserInfo — call register first"
-    },
-    {
-      "code": 6013,
       "name": "Paused",
       "msg": "protocol is paused"
     },
     {
-      "code": 6014,
+      "code": 6013,
       "name": "NothingToWithdraw",
       "msg": "nothing to withdraw: amount exceeds surplus"
     },
     {
-      "code": 6015,
+      "code": 6014,
       "name": "AccountNotEmpty",
       "msg": "user_info not empty: require balance == 0 && pending_unclaimed == 0"
     },
     {
-      "code": 6016,
+      "code": 6015,
       "name": "PoolConfigMismatch",
       "msg": "pool config mismatch"
     }
   ],
   "types": [
+    {
+      "name": "AdminTransferProposed",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "admin",
+            "type": "pubkey"
+          },
+          {
+            "name": "pending_admin",
+            "type": "pubkey"
+          }
+        ]
+      }
+    },
     {
       "name": "AdminTransferred",
       "type": {
@@ -1771,6 +1834,10 @@
             "type": "pubkey"
           },
           {
+            "name": "pending_admin",
+            "type": "pubkey"
+          },
+          {
             "name": "pool_count",
             "type": "u16"
           },
@@ -1787,7 +1854,7 @@
             "type": {
               "array": [
                 "u8",
-                64
+                32
               ]
             }
           }

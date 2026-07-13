@@ -215,10 +215,22 @@ describe("staking v3.x (Config/Pool + hook)", () => {
     assert.equal(c.paused, false);
   });
 
-  it("T-P7: transfer_admin moves create_pool rights", async () => {
+  it("T-P7: transfer_admin (two-step) moves create_pool rights", async () => {
     const newAdmin = Keypair.generate();
+    await conn.confirmTransaction(await conn.requestAirdrop(newAdmin.publicKey, LAMPORTS_PER_SOL));
     await program.methods.transferAdmin(newAdmin.publicKey).accountsStrict({ admin: payer.publicKey, config: configPda }).rpc();
-    const c = await program.account.config.fetch(configPda) as any;
+    // propose alone must NOT move admin yet
+    let c = await program.account.config.fetch(configPda) as any;
+    assert.ok(c.admin.equals(payer.publicKey));
+    assert.ok(c.pendingAdmin.equals(newAdmin.publicKey));
+    // a third party can't accept on the new admin's behalf
+    try {
+      await program.methods.acceptAdmin().accountsStrict({ pendingAdmin: payer.publicKey, config: configPda }).rpc();
+      assert.fail("only pending_admin may accept");
+    } catch (e: any) { expect(e.toString()).to.match(/Unauthorized|0x/i); }
+    // pending admin accepts
+    await program.methods.acceptAdmin().accountsStrict({ pendingAdmin: newAdmin.publicKey, config: configPda }).signers([newAdmin]).rpc();
+    c = await program.account.config.fetch(configPda) as any;
     assert.ok(c.admin.equals(newAdmin.publicKey));
     // old admin can no longer pause
     try {
@@ -227,6 +239,7 @@ describe("staking v3.x (Config/Pool + hook)", () => {
     } catch (e: any) { expect(e.toString()).to.match(/Unauthorized|has_one|0x/i); }
     // restore admin for any later runs
     await program.methods.transferAdmin(payer.publicKey).accountsStrict({ admin: newAdmin.publicKey, config: configPda }).signers([newAdmin]).rpc();
+    await program.methods.acceptAdmin().accountsStrict({ pendingAdmin: payer.publicKey, config: configPda }).rpc();
   });
 
   it("hook: transfer between registered users settles both sides", async () => {

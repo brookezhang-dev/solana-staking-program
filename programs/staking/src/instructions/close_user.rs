@@ -38,7 +38,7 @@ pub struct CloseUserInfo<'info> {
     pub user_info: Account<'info, UserInfo>,
 }
 
-pub fn handler(ctx: Context<CloseUserInfo>) -> Result<()> {
+pub fn close_user_info_handler(ctx: Context<CloseUserInfo>) -> Result<()> {
     require!(
         ctx.accounts.stake_token_account.amount == 0
             && ctx.accounts.user_info.pending_unclaimed == 0,

@@ -29,8 +29,12 @@ pub struct CreatePool<'info> {
     pub staked_mint: Box<InterfaceAccount<'info, Mint>>,
     pub reward_mint: Box<InterfaceAccount<'info, Mint>>,
 
-    // $STAKE receipt mint: mint authority must already be the Pool PDA.
-    #[account(constraint = stake_receipt_mint.mint_authority == COption::Some(pool.key()) @ StakingError::Unauthorized)]
+    // $STAKE receipt mint: mint authority must already be the Pool PDA, and decimals
+    // must match staked_mint 1:1 (stake.rs mints `credited` raw units as receipt).
+    #[account(
+        constraint = stake_receipt_mint.mint_authority == COption::Some(pool.key()) @ StakingError::Unauthorized,
+        constraint = stake_receipt_mint.decimals == staked_mint.decimals @ StakingError::InvalidMint,
+    )]
     pub stake_receipt_mint: Box<InterfaceAccount<'info, Mint>>,
 
     #[account(
@@ -66,7 +70,7 @@ pub struct CreatePool<'info> {
     pub rent: Sysvar<'info, Rent>,
 }
 
-pub fn handler(
+pub fn create_pool_handler(
     ctx: Context<CreatePool>,
     reward_per_sec: u64,
     start_time: i64,
@@ -98,7 +102,7 @@ pub fn handler(
     pool.end_time = end_time;
     pool.reward_per_sec = reward_per_sec;
     pool.total_emitted = 0;
-    pool.total_staked = 0;  // todo: mint amount 
+    pool.total_staked = 0;
     pool.total_claimed = 0;
     pool.bump = ctx.bumps.pool;
     pool.reserved = [0u8; 64];

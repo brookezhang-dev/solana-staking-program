@@ -52,7 +52,7 @@ pub struct Stake<'info> {
     pub system_program: Program<'info, System>,
 }
 
-pub fn handler(ctx: Context<Stake>, amount: u64) -> Result<()> {
+pub fn stake_handler(ctx: Context<Stake>, amount: u64) -> Result<()> {
     require!(amount > 0, StakingError::AmountZero);
     require!(!ctx.accounts.config.paused, StakingError::Paused);
     let now = Clock::get()?.unix_timestamp;

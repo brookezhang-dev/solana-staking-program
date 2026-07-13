@@ -24,7 +24,7 @@ pub mod staking {
 
     // ---- Tier 1: protocol ----
     pub fn initialize_config(ctx: Context<InitializeConfig>) -> Result<()> {
-        instructions::initialize::handler(ctx)
+        instructions::initialize::initialize_config_handler(ctx)
     }
     pub fn set_pause(ctx: Context<AdminConfig>, paused: bool) -> Result<()> {
         instructions::admin::set_pause_handler(ctx, paused)
@@ -32,10 +32,13 @@ pub mod staking {
     pub fn transfer_admin(ctx: Context<AdminConfig>, new_admin: Pubkey) -> Result<()> {
         instructions::admin::transfer_admin_handler(ctx, new_admin)
     }
+    pub fn accept_admin(ctx: Context<AcceptAdmin>) -> Result<()> {
+        instructions::admin::accept_admin_handler(ctx)
+    }
 
     // ---- Tier 2: pool lifecycle (admin) ----
     pub fn create_pool(ctx: Context<CreatePool>, reward_per_sec: u64, start_time: i64, end_time: i64) -> Result<()> {
-        instructions::create_pool::handler(ctx, reward_per_sec, start_time, end_time)
+        instructions::create_pool::create_pool_handler(ctx, reward_per_sec, start_time, end_time)
     }
     pub fn set_emission(ctx: Context<SetEmission>, reward_per_sec: u64, end_time: i64) -> Result<()> {
         instructions::admin::set_emission_handler(ctx, reward_per_sec, end_time)
@@ -47,27 +50,26 @@ pub mod staking {
         instructions::hook::init_extra_metas_handler(ctx)
     }
 
-    // 单独
     pub fn fund_rewards(ctx: Context<FundRewards>, amount: u64) -> Result<()> {
-        instructions::fund::handler(ctx, amount)
+        instructions::fund::fund_rewards_handler(ctx, amount)
     }
 
     // ---- user ----
 
     pub fn register(ctx: Context<Register>) -> Result<()> {
-        instructions::register::handler(ctx)
+        instructions::register::register_handler(ctx)
     }
     pub fn stake(ctx: Context<Stake>, amount: u64) -> Result<()> {
-        instructions::stake::handler(ctx, amount)
+        instructions::stake::stake_handler(ctx, amount)
     }
     pub fn unstake(ctx: Context<Unstake>, amount: u64) -> Result<()> {
-        instructions::unstake::handler(ctx, amount)
+        instructions::unstake::unstake_handler(ctx, amount)
     }
     pub fn claim_rewards(ctx: Context<ClaimRewards>) -> Result<()> {
-        instructions::claim::handler(ctx)
+        instructions::claim::claim_handler(ctx)
     }
     pub fn close_user_info(ctx: Context<CloseUserInfo>) -> Result<()> {
-        instructions::close_user::handler(ctx)
+        instructions::close_user::close_user_info_handler(ctx)
     }
 
     // ---- transfer hook execute (dispatched via fallback) ----
@@ -75,11 +77,10 @@ pub mod staking {
         instructions::hook::execute_handler(ctx, amount)
     }
 
-    // solo or no
     // ---- devnet-only faucet ----
     #[cfg(feature = "devnet-faucet")]
     pub fn faucet(ctx: Context<Faucet>, amount: u64) -> Result<()> {
-        instructions::faucet::handler(ctx, amount)
+        instructions::faucet::faucet_handler(ctx, amount)
     }
 
     /// Route Token-2022's TransferHook `Execute` (spl-transfer-hook-interface

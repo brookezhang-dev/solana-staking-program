@@ -30,10 +30,12 @@ pub enum StakingError {
     InvalidTimeRange,
 
     // ---- transfer hook ----
+    // Note: an unregistered destination is rejected by Anchor's standard
+    // AccountNotInitialized error on `destination_user_info` (see hook.rs) —
+    // there is no dedicated variant here since the handler body never runs
+    // in that case (deserialization fails before it does).
     #[msg("hook execute must be invoked by Token-2022 during a transfer")]
     NotTransferring,
-    #[msg("destination $STAKE account has no UserInfo — call register first")]
-    DestinationNotRegistered,
 
     // ---- lifecycle / two-tier ----
     #[msg("protocol is paused")]
