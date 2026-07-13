@@ -50,9 +50,6 @@ for cross-pool isolation.
 - **Program (devnet):** `54HWhVGu8HoK46PUj3ijauVjrgNScGHyzpnvHsvZGpcv`
   · [Solscan](https://solscan.io/account/54HWhVGu8HoK46PUj3ijauVjrgNScGHyzpnvHsvZGpcv?cluster=devnet)
 - **Docs (match current code):** `CHANGELOG.md` (what changed and why),
-  `全项目实现说明-CODE-WALKTHROUGH.md` and `实现讲解-HOW-IT-WORKS.md` (code-level
-  walkthrough of the two-tier architecture + Transfer Hook).
-  > ⚠️ `Solana质押程序-技术设计文档-v3.md` predates the Config/Pool two-tier +
   > Transfer Hook rework and describes an older (single-pool, non-transferable
   > $STAKE) design — do not use it as a reference for the current code.
 
